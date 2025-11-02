@@ -1,0 +1,1 @@
+export default function Home(){return(<main><p>ようこそ。/login → /u → /admin をお試しください。</p></main>);}
