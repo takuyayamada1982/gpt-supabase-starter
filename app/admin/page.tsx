@@ -8,7 +8,7 @@ export default function AdminPage(){
  useEffect(()=>{(async()=>{
   const { data: logs } = await supabase.from('usage_logs').select('user_id,total_tokens');
   const map=new Map<string,{total_tokens:number,calls:number}>();
-  (logs||[]).forEach(l=>{ const m=map.get(l.user_id)||{total_tokens:0,calls:0}; m.total_tokens+=l.total_tokens; m.calls+=1; map.set(l.user_id,m); });
+  (logs||[]).forEach((l:any)=>{ const m=map.get(l.user_id)||{total_tokens:0,calls:0}; m.total_tokens+=l.total_tokens; m.calls+=1; map.set(l.user_id,m); });
   const arr=Array.from(map.entries()).map(([user_id,v])=>({user_id,...v})); setRows(arr);
  })();},[]);
  return(<main className="space-y-4">

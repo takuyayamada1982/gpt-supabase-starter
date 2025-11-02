@@ -1,7 +1,11 @@
 
 import { createClient } from "@supabase/supabase-js";
+
+/**
+ * クライアント（ブラウザ）側では anon key のみ使用。
+ * service_role は /app/api/* のサーバールート内だけで使用してください。
+ */
 export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  // NOTE: 開発を簡単にするため anon が未設定の場合に service_role を使います（本番では anon を使ってください）
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY!
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
