@@ -34,18 +34,111 @@ export default function UPage() {
     })();
   }, []);
 
+  // ===== THEME（落ち着いたリッチ配色） =====
+  const colors = {
+    pageBg: '#FCFAF5',         // ページ背景（薄いクリーム）
+    ink: '#111111',
+    panelBorder: '#E5E7EB',
+    panelBg: '#FFFFFF',
+    panelShadow: '0 6px 20px rgba(0,0,0,0.06)',
+
+    // SNSカードの配色（淡い背景 + 枠 + 文字）
+    igBg: '#FFF5F9',
+    igBorder: '#F8C2D8',
+    igText: '#3B1C2A',
+
+    fbBg: '#F3F8FF',
+    fbBorder: '#BBD5FF',
+    fbText: '#0F2357',
+
+    xBg: '#F7F7F8',
+    xBorder: '#D6D6DA',
+    xText: '#111111',
+
+    // ボタン
+    btnBg: '#111111',
+    btnText: '#FFFFFF',
+    btnBorder: '#111111',
+    btnGhostBorder: '#DDDDDD',
+    btnGhostBg: '#FFFFFF'
+  };
+
+  const pageStyle: React.CSSProperties = {
+    maxWidth: 1080,
+    margin: '0 auto',
+    padding: 16,
+    background: colors.pageBg,
+    boxSizing: 'border-box'
+  };
+
+  const panel: React.CSSProperties = {
+    background: colors.panelBg,
+    border: `1px solid ${colors.panelBorder}`,
+    borderRadius: 14,
+    padding: 16,
+    boxShadow: colors.panelShadow,
+    overflow: 'hidden'
+  };
+
+  const btn: React.CSSProperties = {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: `1px solid ${colors.btnBorder}`,
+    background: colors.btnBg,
+    color: colors.btnText,
+    fontWeight: 600
+  };
+  const btnGhost: React.CSSProperties = {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: `1px solid ${colors.btnGhostBorder}`,
+    background: colors.btnGhostBg,
+    color: colors.ink,
+    fontWeight: 600
+  };
+  const inputStyle: React.CSSProperties = {
+    border: `1px solid ${colors.btnGhostBorder}`,
+    padding: 12,
+    borderRadius: 10,
+    width: '100%',
+    boxSizing: 'border-box',
+    background: '#FFFFFF'
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 6,
+    display: 'block'
+  };
+
+  const cardGrid: React.CSSProperties = {
+    display: 'grid',
+    gap: 12,
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))'
+  };
+
+  const snsCardBase: React.CSSProperties = {
+    borderRadius: 12,
+    padding: 12,
+    boxSizing: 'border-box',
+    overflow: 'hidden'
+  };
+
+  const textAreaStyle: React.CSSProperties = {
+    ...inputStyle,
+    height: 160,
+    resize: 'vertical',
+    overflow: 'auto',
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word'
+  };
+
   const copy = async (text: string) => {
     try { await navigator.clipboard.writeText(text); alert('コピーしました'); }
     catch { alert('コピーに失敗しました'); }
   };
 
-  const panel: React.CSSProperties = { background:'#fff', border:'1px solid #e5e7eb', borderRadius:12, padding:16 };
-  const btn: React.CSSProperties = { padding:'8px 12px', borderRadius:8, border:'1px solid #111', background:'#111', color:'#fff' };
-  const btnGhost: React.CSSProperties = { padding:'8px 12px', borderRadius:8, border:'1px solid #ddd', background:'#fff' };
-  const inputStyle: React.CSSProperties = { border:'1px solid #ddd', padding:12, borderRadius:8, width:'100%' };
-  const labelStyle: React.CSSProperties = { fontSize:12, color:'#6b7280', marginBottom:6, display:'block' };
-
-  // ===== URL → まとめて生成（要約/タイトル/ハッシュタグ + 3SNS） =====
+  // ===== URL → まとめて生成 =====
   const generateFromURL = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!urlInput) { alert('URLを入力してください'); return; }
@@ -60,12 +153,10 @@ export default function UPage() {
       const j = await res.json();
       if (j?.error) throw new Error(j.error);
 
-      // 要約/タイトル/ハッシュタグ
       setUrlSummary(j.summary || '');
       setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
       setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
 
-      // SNS 3種
       setInstaText(j.instagram || '');
       setFbText(j.facebook || '');
       setXText(j.x || '');
@@ -78,7 +169,7 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS（/api/vision を3回呼ぶ既存方式） =====
+  // ===== 画像 → SNS =====
   const generateFromImage = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!imageFile) { alert('画像を選択してください'); return; }
@@ -131,16 +222,18 @@ export default function UPage() {
   };
 
   return (
-    <main style={{ maxWidth: 980, margin: '0 auto', padding: 16 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>ユーザーページ</h2>
+    <main style={pageStyle}>
+      <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12, color: colors.ink }}>
+        ユーザーページ
+      </h2>
 
       {/* ===== ① URL → 生成（上段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>① URLからSNS向け文章を自動生成</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>① URLからSNS向け文章を自動生成</h3>
         <div style={{ display:'grid', gap:8, marginBottom:12 }}>
           <label style={labelStyle}>記事やブログのURL</label>
           <input
-            style={{ ...inputStyle }}
+            style={inputStyle}
             placeholder="https://example.com/article"
             value={urlInput}
             onChange={e=>setUrlInput(e.target.value)}
@@ -163,8 +256,8 @@ export default function UPage() {
             {/* 要約 */}
             {urlSummary && (
               <div>
-                <div style={{ fontWeight:700, marginBottom:6 }}>要約（200〜300文字）</div>
-                <div style={{ border:'1px solid #eee', borderRadius:8, padding:12, background:'#fafafa', whiteSpace:'pre-wrap' }}>
+                <div style={{ fontWeight:700, marginBottom:6, color: colors.ink }}>要約（200〜300文字）</div>
+                <div style={{ border:'1px solid #eee', borderRadius:10, padding:12, background:'#FAFAFA', whiteSpace:'pre-wrap' }}>
                   {urlSummary}
                 </div>
                 <div style={{ marginTop:8 }}>
@@ -176,7 +269,7 @@ export default function UPage() {
             {/* タイトル案 */}
             {urlTitles.length > 0 && (
               <div>
-                <div style={{ fontWeight:700, marginBottom:6 }}>タイトル案（3つ）</div>
+                <div style={{ fontWeight:700, marginBottom:6, color: colors.ink }}>タイトル案（3つ）</div>
                 <ul style={{ listStyle:'disc', paddingLeft:20, margin:0 }}>
                   {urlTitles.map((t, i)=>(
                     <li key={i} style={{ marginBottom:6, display:'flex', gap:8, alignItems:'flex-start' }}>
@@ -191,7 +284,7 @@ export default function UPage() {
             {/* ハッシュタグ候補 */}
             {urlHashtags.length > 0 && (
               <div>
-                <div style={{ fontWeight:700, marginBottom:6 }}>ハッシュタグ候補（10〜15）</div>
+                <div style={{ fontWeight:700, marginBottom:6, color: colors.ink }}>ハッシュタグ候補（10〜15）</div>
                 <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
                   {urlHashtags.map((h, i)=>(
                     <span key={i} style={{ border:'1px solid #eee', borderRadius:999, padding:'6px 10px', background:'#fff' }}>{h}</span>
@@ -208,7 +301,7 @@ export default function UPage() {
 
       {/* ===== ② 画像 → 生成（中段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>② 画像からSNS向け文章を自動生成</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>② 画像からSNS向け文章を自動生成</h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
           <label style={labelStyle}>画像ファイル</label>
           <input
@@ -235,25 +328,66 @@ export default function UPage() {
         </div>
 
         {/* 3カラム：SNS欄（URL生成でも画像生成でもここに反映） */}
-        <div style={{ display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))' }}>
-          <div style={{ border:'1px solid #eee', borderRadius:10, padding:12 }}>
-            <div style={{ fontWeight:700, marginBottom:6 }}>Instagram（約200文字＋ハッシュタグ）</div>
-            <textarea style={{ ...inputStyle, height:160 }} value={instaText} onChange={e=>setInstaText(e.target.value)} placeholder="ここにInstagram向けの説明が入ります" />
-            <div style={{ marginTop:8, display:'flex', gap:8 }}>
+        <div style={cardGrid}>
+          {/* Instagram */}
+          <div
+            style={{
+              ...snsCardBase,
+              background: colors.igBg,
+              border: `1px solid ${colors.igBorder}`,
+              color: colors.igText
+            }}
+          >
+            <div style={{ fontWeight:800, marginBottom:6 }}>Instagram（約200文字＋ハッシュタグ）</div>
+            <textarea
+              style={{ ...textAreaStyle, background:'#FFFFFF' }}
+              value={instaText}
+              onChange={e=>setInstaText(e.target.value)}
+              placeholder="ここにInstagram向けの説明が入ります"
+            />
+            <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
               <button style={btnGhost} onClick={() => copy(instaText)}>コピー</button>
             </div>
           </div>
-          <div style={{ border:'1px solid #eee', borderRadius:10, padding:12 }}>
-            <div style={{ fontWeight:700, marginBottom:6 }}>Facebook（ストーリー重視・約700文字＋ハッシュタグ）</div>
-            <textarea style={{ ...inputStyle, height:220 }} value={fbText} onChange={e=>setFbText(e.target.value)} placeholder="ここにFacebook向けの説明が入ります" />
-            <div style={{ marginTop:8, display:'flex', gap:8 }}>
+
+          {/* Facebook */}
+          <div
+            style={{
+              ...snsCardBase,
+              background: colors.fbBg,
+              border: `1px solid ${colors.fbBorder}`,
+              color: colors.fbText
+            }}
+          >
+            <div style={{ fontWeight:800, marginBottom:6 }}>Facebook（ストーリー重視・約700文字＋ハッシュタグ）</div>
+            <textarea
+              style={{ ...textAreaStyle, height: 220, background:'#FFFFFF' }}
+              value={fbText}
+              onChange={e=>setFbText(e.target.value)}
+              placeholder="ここにFacebook向けの説明が入ります"
+            />
+            <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
               <button style={btnGhost} onClick={() => copy(fbText)}>コピー</button>
             </div>
           </div>
-          <div style={{ border:'1px solid #eee', borderRadius:10, padding:12 }}>
-            <div style={{ fontWeight:700, marginBottom:6 }}>X（150文字コンパクト＋ハッシュタグ）</div>
-            <textarea style={{ ...inputStyle, height:140 }} value={xText} onChange={e=>setXText(e.target.value)} placeholder="ここにX向けの説明が入ります" />
-            <div style={{ marginTop:8, display:'flex', gap:8 }}>
+
+          {/* X / Twitter */}
+          <div
+            style={{
+              ...snsCardBase,
+              background: colors.xBg,
+              border: `1px solid ${colors.xBorder}`,
+              color: colors.xText
+            }}
+          >
+            <div style={{ fontWeight:800, marginBottom:6 }}>X（150文字コンパクト＋ハッシュタグ）</div>
+            <textarea
+              style={{ ...textAreaStyle, height: 140, background:'#FFFFFF' }}
+              value={xText}
+              onChange={e=>setXText(e.target.value)}
+              placeholder="ここにX向けの説明が入ります"
+            />
+            <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
               <button style={btnGhost} onClick={() => copy(xText)}>コピー</button>
             </div>
           </div>
@@ -262,11 +396,11 @@ export default function UPage() {
 
       {/* ===== ③ 通常チャット（下段） ===== */}
       <div style={{ ...panel }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>③ 通常チャット</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>③ 通常チャット</h3>
         <div style={{ display:'grid', gap:8, marginBottom:8 }}>
           <label style={labelStyle}>記載例（そのまま書き換えてOK）</label>
           <textarea
-            style={{ ...inputStyle, height: 96 }}
+            style={{ ...inputStyle, height: 96, resize:'vertical', overflow:'auto', whiteSpace:'pre-wrap' }}
             placeholder={
               '例: 「このテキストを要約して、X向けに150文字で」\n' +
               '例: 「Instagram / Facebook / X それぞれのトーンで整えて」'
@@ -285,10 +419,10 @@ export default function UPage() {
           {messages.map((m, i) => (
             <div key={i} style={{
               border:'1px solid #eee', borderRadius:10, padding:12,
-              background: m.role === 'user' ? '#f0f9ff' : '#f9fafb'
+              background: m.role === 'user' ? '#F0F9FF' : '#F9FAFB'
             }}>
               <div style={{ fontSize:12, color:'#6b7280', marginBottom:4 }}>{m.role}</div>
-              <div style={{ whiteSpace:'pre-wrap' }}>{m.content}</div>
+              <div style={{ whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{m.content}</div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop:8 }}>
                   <button style={btnGhost} onClick={() => copy(m.content)}>この返信をコピー</button>
