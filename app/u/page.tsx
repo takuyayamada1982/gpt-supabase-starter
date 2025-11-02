@@ -268,3 +268,31 @@ export default function UPage() {
     </main>
   );
 }
+const generateFromImage = async () => {
+  if (!userId) { alert('ログインが必要です（プライベートタブは使わないでください）'); return; }
+  if (!imageFile) { alert('画像を選択してください'); return; }
+
+  // サイズ制限（例：8MB）
+  if (imageFile.size > 8 * 1024 * 1024) {
+    alert('画像が大きすぎます。8MB以下にして再アップしてください（スクショやトリミング推奨）');
+    return;
+  }
+
+  setIsGenerating(true);
+  const path = `${userId}/${Date.now()}_${imageFile.name}`;
+
+  // コンテンツタイプを明示（iOSで空になることへの保険）
+  const contentType = imageFile.type || 'image/jpeg';
+  const up = await supabase.storage.from('uploads').upload(path, imageFile, {
+    upsert: true,
+    contentType
+  });
+
+  if (up.error) {
+    alert(`アップロードに失敗しました：${up.error.message}`);
+    setIsGenerating(false);
+    return;
+  }
+
+  // ...（この後の fetch('/api/vision', ...) はそのまま）
+};
