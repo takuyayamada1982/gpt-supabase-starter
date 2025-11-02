@@ -188,3 +188,74 @@ export default function UPage() {
 
   // ...（この後の fetch('/api/vision', ...) はそのまま）
 };
+const [urlInput, setUrlInput] = useState('');
+const [urlLoading, setUrlLoading] = useState(false);
+
+// 追加：要約/タイトル案/ハッシュタグ候補
+const [urlSummary, setUrlSummary] = useState('');
+const [urlTitles, setUrlTitles] = useState<string[]>([]);
+const [urlHashtags, setUrlHashtags] = useState<string[]>([]);
+const j = await res.json();
+if (j?.error) throw new Error(j.error);
+
+// 追加：要約/タイトル/ハッシュタグ
+setUrlSummary(j.summary || '');
+setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
+setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
+
+// 既存：SNS3種の欄にも反映
+setInstaText(j.instagram || '');
+setFbText(j.facebook || '');
+setXText(j.x || '');
+{/* 要約・タイトル案・ハッシュタグ候補（URL生成後に表示） */}
+{(urlSummary || urlTitles.length || urlHashtags.length) && (
+  <div style={{ borderTop:'1px dashed #e5e7eb', marginTop:12, paddingTop:12, display:'grid', gap:12 }}>
+    {/* 要約 */}
+    {urlSummary && (
+      <div>
+        <div style={{ fontWeight:700, marginBottom:6 }}>要約（200〜300文字）</div>
+        <div style={{ border:'1px solid #eee', borderRadius:8, padding:12, background:'#fafafa', whiteSpace:'pre-wrap' }}>
+          {urlSummary}
+        </div>
+        <div style={{ marginTop:8 }}>
+          <button style={{ padding:'6px 10px', border:'1px solid #ddd', borderRadius:8 }} onClick={()=>copy(urlSummary)}>要約をコピー</button>
+        </div>
+      </div>
+    )}
+
+    {/* タイトル案 */}
+    {urlTitles.length > 0 && (
+      <div>
+        <div style={{ fontWeight:700, marginBottom:6 }}>タイトル案（3つ）</div>
+        <ul style={{ listStyle:'disc', paddingLeft:20, margin:0 }}>
+          {urlTitles.map((t, i)=>(
+            <li key={i} style={{ marginBottom:6, display:'flex', gap:8, alignItems:'flex-start' }}>
+              <span style={{ flex:1 }}>{t}</span>
+              <button style={{ padding:'4px 8px', border:'1px solid #ddd', borderRadius:8 }} onClick={()=>copy(t)}>コピー</button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    )}
+
+    {/* ハッシュタグ候補 */}
+    {urlHashtags.length > 0 && (
+      <div>
+        <div style={{ fontWeight:700, marginBottom:6 }}>ハッシュタグ候補（10〜15）</div>
+        <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+          {urlHashtags.map((h, i)=>(
+            <span key={i} style={{ border:'1px solid #eee', borderRadius:999, padding:'6px 10px', background:'#fff' }}>{h}</span>
+          ))}
+        </div>
+        <div style={{ marginTop:8 }}>
+          <button
+            style={{ padding:'6px 10px', border:'1px solid #ddd', borderRadius:8 }}
+            onClick={()=>copy(urlHashtags.join(' '))}
+          >
+            すべてコピー
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+)}
