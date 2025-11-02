@@ -1,30 +1,53 @@
-
 import { NextRequest, NextResponse } from "next/server";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY! });
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-export async function POST(req: NextRequest){
-  try{
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+export async function POST(req: NextRequest) {
+  try {
     const { userId, prompt, filePath } = await req.json();
-    if(!userId) return NextResponse.json({error:'unauthorized'},{status:401});
-    if(!filePath) return NextResponse.json({error:'filePath required'},{status:400});
-    const { data, error } = await supabase.storage.from('uploads').createSignedUrl(filePath, 60);
-    if(error || !data?.signedUrl) return NextResponse.json({error: error?.message || 'sign url failed'},{status:500});
+    if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+    if (!filePath) return NextResponse.json({ error: "filePath required" }, { status: 400 });
+
+    // 署名URLを短時間発行
+    const { data, error } = await supabase.storage.from("uploads").createSignedUrl(filePath, 60);
+    if (error || !data?.signedUrl) {
+      return NextResponse.json({ error: error?.message || "sign url failed" }, { status: 500 });
+    }
+
+    // ✅ detail を追加（'low' | 'auto' | 'high' のいずれか）
     const res = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      input: [{ role:'user', content: [
-        { type:'input_text', text: prompt || 'この画像を説明してください' },
-        { type:'input_image', image_url: data.signedUrl }
-      ]}],
+      model: "gpt-4.1-mini",
+      input: [
+        {
+          role: "user",
+          content: [
+            { type: "input_text", text: prompt || "この画像を説明してください" },
+            { type: "input_image", image_url: data.signedUrl, detail: "auto" }
+          ]
+        }
+      ],
       max_output_tokens: 800
     });
+
     const u: any = (res as any).usage;
-    if(u){ await supabase.from('usage_logs').insert({
-      user_id: userId, model: (res as any).model ?? 'gpt-4.1-mini',
-      prompt_tokens: u.prompt_tokens ?? 0, completion_tokens: u.completion_tokens ?? 0, total_tokens: u.total_tokens ?? 0
-    }); }
-    const text = (res as any).output_text ?? '';
-    return NextResponse.json({ text });
-  }catch(e:any){ return NextResponse.json({error:e.message},{status:500}); }
+    if (u) {
+      await supabase.from("usage_logs").insert({
+        user_id: userId,
+        model: (res as any).model ?? "gpt-4.1-mini",
+        prompt_tokens: u.prompt_tokens ?? 0,
+        completion_tokens: u.completion_tokens ?? 0,
+        total_tokens: u.total_tokens ?? 0
+      });
+    }
+
+    return NextResponse.json({ text: (res as any).output_text ?? "" });
+  } catch (e: any) {
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
 }
