@@ -51,3 +51,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
+// 署名URLを短時間発行（60 → 300秒に）
+const { data, error } = await supabase.storage
+  .from("uploads")
+  .createSignedUrl(filePath, 300);
