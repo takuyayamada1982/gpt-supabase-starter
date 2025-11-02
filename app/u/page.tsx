@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
 type Msg = { role: 'user'|'assistant', content: string };
@@ -8,14 +8,21 @@ type Msg = { role: 'user'|'assistant', content: string };
 export default function UPage() {
   const [userId, setUserId] = useState<string>('');
 
-  // 画像→SNS
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+  // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
+  const [urlInput, setUrlInput] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlSummary, setUrlSummary] = useState('');
+  const [urlTitles, setUrlTitles] = useState<string[]>([]);
+  const [urlHashtags, setUrlHashtags] = useState<string[]>([]);
   const [instaText, setInstaText] = useState('');
   const [fbText, setFbText] = useState('');
   const [xText, setXText] = useState('');
 
-  // チャット
+  // ===== 画像 → SNS =====
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState<Msg[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
@@ -38,7 +45,40 @@ export default function UPage() {
   const inputStyle: React.CSSProperties = { border:'1px solid #ddd', padding:12, borderRadius:8, width:'100%' };
   const labelStyle: React.CSSProperties = { fontSize:12, color:'#6b7280', marginBottom:6, display:'block' };
 
-  // 画像からSNS文作成（/api/vision をSNS別に3回呼ぶ）
+  // ===== URL → まとめて生成（要約/タイトル/ハッシュタグ + 3SNS） =====
+  const generateFromURL = async () => {
+    if (!userId) { alert('ログインが必要です'); return; }
+    if (!urlInput) { alert('URLを入力してください'); return; }
+
+    setUrlLoading(true);
+    try {
+      const res = await fetch('/api/url', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ userId, url: urlInput })
+      });
+      const j = await res.json();
+      if (j?.error) throw new Error(j.error);
+
+      // 要約/タイトル/ハッシュタグ
+      setUrlSummary(j.summary || '');
+      setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
+      setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
+
+      // SNS 3種
+      setInstaText(j.instagram || '');
+      setFbText(j.facebook || '');
+      setXText(j.x || '');
+
+      alert('URLからSNS向け文章を生成しました');
+    } catch (e:any) {
+      alert(`エラー: ${e.message}`);
+    } finally {
+      setUrlLoading(false);
+    }
+  };
+
+  // ===== 画像 → SNS（/api/vision を3回呼ぶ既存方式） =====
   const generateFromImage = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!imageFile) { alert('画像を選択してください'); return; }
@@ -75,12 +115,16 @@ export default function UPage() {
     } finally { setIsGenerating(false); }
   };
 
-  // 通常チャット
+  // ===== チャット =====
   const sendChat = async () => {
     if (!userId || !chatInput) return;
     setChatLoading(true);
     setMessages(m => [...m, { role:'user', content: chatInput }]);
-    const res = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ userId, userText: chatInput }) });
+    const res = await fetch('/api/chat', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ userId, userText: chatInput })
+    });
     const j = await res.json();
     setMessages(m => [...m, { role:'assistant', content: j.text || '' }]);
     setChatInput(''); setChatLoading(false);
@@ -88,11 +132,83 @@ export default function UPage() {
 
   return (
     <main style={{ maxWidth: 980, margin: '0 auto', padding: 16 }}>
-      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 8 }}>ユーザーページ</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 12 }}>ユーザーページ</h2>
 
-      {/* 上段：画像→SNS生成 */}
+      {/* ===== ① URL → 生成（上段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>① 画像からSNS向け文章を自動生成</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>① URLからSNS向け文章を自動生成</h3>
+        <div style={{ display:'grid', gap:8, marginBottom:12 }}>
+          <label style={labelStyle}>記事やブログのURL</label>
+          <input
+            style={{ ...inputStyle }}
+            placeholder="https://example.com/article"
+            value={urlInput}
+            onChange={e=>setUrlInput(e.target.value)}
+            inputMode="url"
+          />
+          <div>
+            <button
+              style={urlLoading ? btnGhost : btn}
+              disabled={!urlInput || urlLoading}
+              onClick={generateFromURL}
+            >
+              {urlLoading ? '生成中…' : 'URLから3種類の原稿を作る'}
+            </button>
+          </div>
+        </div>
+
+        {/* 要約・タイトル案・ハッシュタグ候補（URL生成後に表示） */}
+        {(urlSummary || urlTitles.length || urlHashtags.length) ? (
+          <div style={{ borderTop:'1px dashed #e5e7eb', marginTop:12, paddingTop:12, display:'grid', gap:12 }}>
+            {/* 要約 */}
+            {urlSummary && (
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>要約（200〜300文字）</div>
+                <div style={{ border:'1px solid #eee', borderRadius:8, padding:12, background:'#fafafa', whiteSpace:'pre-wrap' }}>
+                  {urlSummary}
+                </div>
+                <div style={{ marginTop:8 }}>
+                  <button style={btnGhost} onClick={()=>copy(urlSummary)}>要約をコピー</button>
+                </div>
+              </div>
+            )}
+
+            {/* タイトル案 */}
+            {urlTitles.length > 0 && (
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>タイトル案（3つ）</div>
+                <ul style={{ listStyle:'disc', paddingLeft:20, margin:0 }}>
+                  {urlTitles.map((t, i)=>(
+                    <li key={i} style={{ marginBottom:6, display:'flex', gap:8, alignItems:'flex-start' }}>
+                      <span style={{ flex:1 }}>{t}</span>
+                      <button style={btnGhost} onClick={()=>copy(t)}>コピー</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* ハッシュタグ候補 */}
+            {urlHashtags.length > 0 && (
+              <div>
+                <div style={{ fontWeight:700, marginBottom:6 }}>ハッシュタグ候補（10〜15）</div>
+                <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
+                  {urlHashtags.map((h, i)=>(
+                    <span key={i} style={{ border:'1px solid #eee', borderRadius:999, padding:'6px 10px', background:'#fff' }}>{h}</span>
+                  ))}
+                </div>
+                <div style={{ marginTop:8 }}>
+                  <button style={btnGhost} onClick={()=>copy(urlHashtags.join(' '))}>すべてコピー</button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      {/* ===== ② 画像 → 生成（中段） ===== */}
+      <div style={{ ...panel, marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>② 画像からSNS向け文章を自動生成</h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
           <label style={labelStyle}>画像ファイル</label>
           <input
@@ -104,7 +220,7 @@ export default function UPage() {
               const t = (f.type || '').toLowerCase();
               if (t.includes('heic') || t.includes('heif')) {
                 alert('HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。');
-                e.currentTarget.value = '';
+                (e.currentTarget as HTMLInputElement).value = '';
                 setImageFile(null);
                 return;
               }
@@ -118,6 +234,7 @@ export default function UPage() {
           </div>
         </div>
 
+        {/* 3カラム：SNS欄（URL生成でも画像生成でもここに反映） */}
         <div style={{ display:'grid', gap:12, gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))' }}>
           <div style={{ border:'1px solid #eee', borderRadius:10, padding:12 }}>
             <div style={{ fontWeight:700, marginBottom:6 }}>Instagram（約200文字＋ハッシュタグ）</div>
@@ -143,9 +260,9 @@ export default function UPage() {
         </div>
       </div>
 
-      {/* 下段：通常チャット */}
+      {/* ===== ③ 通常チャット（下段） ===== */}
       <div style={{ ...panel }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>② 通常チャット</h3>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>③ 通常チャット</h3>
         <div style={{ display:'grid', gap:8, marginBottom:8 }}>
           <label style={labelStyle}>記載例（そのまま書き換えてOK）</label>
           <textarea
@@ -184,78 +301,3 @@ export default function UPage() {
     </main>
   );
 }
-
-
-  // ...（この後の fetch('/api/vision', ...) はそのまま）
-};
-const [urlInput, setUrlInput] = useState('');
-const [urlLoading, setUrlLoading] = useState(false);
-
-// 追加：要約/タイトル案/ハッシュタグ候補
-const [urlSummary, setUrlSummary] = useState('');
-const [urlTitles, setUrlTitles] = useState<string[]>([]);
-const [urlHashtags, setUrlHashtags] = useState<string[]>([]);
-const j = await res.json();
-if (j?.error) throw new Error(j.error);
-
-// 追加：要約/タイトル/ハッシュタグ
-setUrlSummary(j.summary || '');
-setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
-setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
-
-// 既存：SNS3種の欄にも反映
-setInstaText(j.instagram || '');
-setFbText(j.facebook || '');
-setXText(j.x || '');
-{/* 要約・タイトル案・ハッシュタグ候補（URL生成後に表示） */}
-{(urlSummary || urlTitles.length || urlHashtags.length) && (
-  <div style={{ borderTop:'1px dashed #e5e7eb', marginTop:12, paddingTop:12, display:'grid', gap:12 }}>
-    {/* 要約 */}
-    {urlSummary && (
-      <div>
-        <div style={{ fontWeight:700, marginBottom:6 }}>要約（200〜300文字）</div>
-        <div style={{ border:'1px solid #eee', borderRadius:8, padding:12, background:'#fafafa', whiteSpace:'pre-wrap' }}>
-          {urlSummary}
-        </div>
-        <div style={{ marginTop:8 }}>
-          <button style={{ padding:'6px 10px', border:'1px solid #ddd', borderRadius:8 }} onClick={()=>copy(urlSummary)}>要約をコピー</button>
-        </div>
-      </div>
-    )}
-
-    {/* タイトル案 */}
-    {urlTitles.length > 0 && (
-      <div>
-        <div style={{ fontWeight:700, marginBottom:6 }}>タイトル案（3つ）</div>
-        <ul style={{ listStyle:'disc', paddingLeft:20, margin:0 }}>
-          {urlTitles.map((t, i)=>(
-            <li key={i} style={{ marginBottom:6, display:'flex', gap:8, alignItems:'flex-start' }}>
-              <span style={{ flex:1 }}>{t}</span>
-              <button style={{ padding:'4px 8px', border:'1px solid #ddd', borderRadius:8 }} onClick={()=>copy(t)}>コピー</button>
-            </li>
-          ))}
-        </ul>
-      </div>
-    )}
-
-    {/* ハッシュタグ候補 */}
-    {urlHashtags.length > 0 && (
-      <div>
-        <div style={{ fontWeight:700, marginBottom:6 }}>ハッシュタグ候補（10〜15）</div>
-        <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-          {urlHashtags.map((h, i)=>(
-            <span key={i} style={{ border:'1px solid #eee', borderRadius:999, padding:'6px 10px', background:'#fff' }}>{h}</span>
-          ))}
-        </div>
-        <div style={{ marginTop:8 }}>
-          <button
-            style={{ padding:'6px 10px', border:'1px solid #ddd', borderRadius:8 }}
-            onClick={()=>copy(urlHashtags.join(' '))}
-          >
-            すべてコピー
-          </button>
-        </div>
-      </div>
-    )}
-  </div>
-)}
