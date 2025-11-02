@@ -1,0 +1,15 @@
+{
+  "redirects": [
+    {
+      "source": "/(.*)",
+      "has": [
+        {
+          "type": "host",
+          "value": "^(?!gpt-supabase-starter\\.vercel\\.app$).*"
+        }
+      ],
+      "destination": "https://gpt-supabase-starter.vercel.app/$1",
+      "permanent": true
+    }
+  ]
+}
