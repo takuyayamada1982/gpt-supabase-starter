@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import Link from 'next/link';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -12,13 +11,15 @@ export default function LoginPage() {
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
 
-  // すでにログイン済みなら /u に誘導（任意）
+  // ← 変更点：自動リダイレクトはせず、状態だけ見る
+  const [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false);
+  const [checking, setChecking] = useState(true);
+
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      if (data.user) {
-        window.location.href = '/u';
-      }
+      setAlreadyLoggedIn(!!data.user);
+      setChecking(false);
     })();
   }, []);
 
@@ -26,7 +27,6 @@ export default function LoginPage() {
     e.preventDefault();
     setErr(null);
     setOk(null);
-
     if (!email.trim() || !pass) {
       setErr('メールアドレスとパスワードを入力してください。');
       return;
@@ -37,46 +37,39 @@ export default function LoginPage() {
       password: pass,
     });
     setLoading(false);
-
     if (error) {
       setErr(error.message || 'ログインに失敗しました。');
       return;
     }
     setOk('ログインに成功しました。ページを移動します…');
-    // 成功したらユーザーページへ
-    window.location.href = '/u';
+    window.location.href = '/u'; // 成功時のみ遷移
   };
 
-  const onReset = async () => {
+  const goToU = () => (window.location.href = '/u');
+
+  const onLogout = async () => {
     setErr(null);
-    setOk(null);
-    if (!email.trim()) {
-      setErr('パスワード再設定にはメールアドレスの入力が必要です。');
-      return;
-    }
-    // Supabase Auth → パスワードリセットメール送付
-    // Supabase Auth 設定の「Reset password redirect URL」に
-    // 例: https://<your-domain>/login を設定しておくとスムーズです。
-    const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-      redirectTo:
-        process.env.NEXT_PUBLIC_SITE_URL
-          ? `${process.env.NEXT_PUBLIC_SITE_URL}/login`
-          : undefined,
-    });
-    if (error) {
-      setErr(error.message || '再設定メールの送信に失敗しました。');
-    } else {
-      setOk('パスワード再設定メールを送信しました。受信ボックスをご確認ください。');
-    }
+    await supabase.auth.signOut();
+    setAlreadyLoggedIn(false);
+    setOk('この端末のログイン情報を削除しました。必要なら再度ログインしてください。');
   };
 
   return (
     <main className="max-w-md mx-auto">
       <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 sm:p-8">
-        <h2 className="text-xl font-semibold text-gray-900 mb-1">ログイン</h2>
-        <p className="text-sm text-gray-600 mb-6">
-          メールアドレスとパスワードを入力してください。
-        </p>
+        <h2 className="text-xl font-semibold mb-1">ログイン</h2>
+        <p className="text-sm text-gray-600 mb-4">メールアドレスとパスワードを入力してください。</p>
+
+        {/* 変更点：ログイン済みでも自動遷移しない */}
+        {!checking && alreadyLoggedIn && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2">
+            すでにログイン済みです。
+            <div className="mt-2 flex gap-8">
+              <button onClick={goToU} className="underline">ユーザーページへ</button>
+              <button onClick={onLogout} className="underline">ログアウト</button>
+            </div>
+          </div>
+        )}
 
         {err && (
           <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
@@ -91,38 +84,29 @@ export default function LoginPage() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              メールアドレス
-            </label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">メールアドレス</label>
             <input
-              type="email"
-              inputMode="email"
-              autoComplete="email"
+              type="email" inputMode="email" autoComplete="email"
               placeholder="you@example.com"
-              className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-sky-400"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              className="w-full rounded-xl border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-sky-400"
+              value={email} onChange={(e) => setEmail(e.target.value)}
             />
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
-              パスワード
-            </label>
+            <label className="block text-xs font-medium text-gray-600 mb-1">パスワード</label>
             <div className="relative">
               <input
                 type={showPass ? 'text' : 'password'}
                 autoComplete="current-password"
                 placeholder="8文字以上の英数記号"
-                className="w-full rounded-xl border border-gray-300 bg-white px-3 py-2 pr-10 text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-sky-400 focus:border-sky-400"
-                value={pass}
-                onChange={(e) => setPass(e.target.value)}
+                className="w-full rounded-xl border border-gray-300 px-3 py-2 pr-12 focus:ring-2 focus:ring-sky-400"
+                value={pass} onChange={(e) => setPass(e.target.value)}
               />
               <button
                 type="button"
                 onClick={() => setShowPass((v) => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 text-xs px-2 py-1 border border-gray-300 rounded-md bg-white"
-                aria-label={showPass ? 'パスワードを隠す' : 'パスワードを表示'}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white"
               >
                 {showPass ? '隠す' : '表示'}
               </button>
@@ -130,42 +114,30 @@ export default function LoginPage() {
           </div>
 
           <button
-            type="submit"
-            disabled={loading}
+            type="submit" disabled={loading}
             className={`w-full rounded-xl px-4 py-2 font-semibold text-white ${
-              loading
-                ? 'bg-gray-400 cursor-not-allowed'
-                : 'bg-gray-900 hover:bg-gray-800'
+              loading ? 'bg-gray-400' : 'bg-gray-900 hover:bg-gray-800'
             }`}
           >
             {loading ? 'ログイン中…' : 'ログイン'}
           </button>
         </form>
 
-        <div className="mt-4 flex items-center justify-between text-sm">
-          <button
-            type="button"
-            onClick={onReset}
-            className="text-sky-700 hover:text-sky-900"
-          >
+        <div className="mt-4 text-sm">
+          <button onClick={async () => {
+            if (!email.trim()) return setErr('再設定にはメールアドレスが必要です。');
+            const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+              redirectTo:
+                process.env.NEXT_PUBLIC_SITE_URL
+                  ? `${process.env.NEXT_PUBLIC_SITE_URL}/login`
+                  : undefined,
+            });
+            if (error) setErr(error.message);
+            else setOk('パスワード再設定メールを送信しました。受信ボックスをご確認ください。');
+          }} className="text-sky-700 hover:text-sky-900">
             パスワードをお忘れの方
           </button>
-
-          {/* 任意：新規登録を許可する場合 */}
-          {/* <Link href="/signup" className="text-gray-700 hover:text-gray-900">
-            新規登録
-          </Link> */}
         </div>
-
-        <div className="mt-6 text-xs text-gray-500">
-          <p>※ パスワード再設定メールが届かない場合は、迷惑メールをご確認ください。</p>
-        </div>
-      </div>
-
-      {/* ナビ（任意） */}
-      <div className="text-xs text-gray-500 mt-4 space-x-3">
-        <Link href="/u" className="hover:underline">ユーザーページ</Link>
-        <Link href="/admin" className="hover:underline">管理ページ</Link>
       </div>
     </main>
   );
