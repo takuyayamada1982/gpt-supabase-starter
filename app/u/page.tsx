@@ -1,10 +1,4 @@
-// ✅ これが正しい先頭
-'use client';
 
-import { useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
-
-// （この下は今のあなたのコードのままでOK）
 'use client';
 
 import { useEffect, useState } from 'react';
