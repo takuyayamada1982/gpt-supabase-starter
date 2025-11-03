@@ -1,6 +1,10 @@
-// app/u/page.tsx の先頭に追記
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+// ✅ これが正しい先頭
+'use client';
+
+import { useEffect, useState } from 'react';
+import { supabase } from '@/lib/supabaseClient';
+
+// （この下は今のあなたのコードのままでOK）
 'use client';
 
 import { useEffect, useState } from 'react';
