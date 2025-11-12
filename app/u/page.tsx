@@ -33,6 +33,7 @@ const stancePrompts = {
   // ===== 画像 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [imageNote, setImageNote] = useState('');
 
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
@@ -210,9 +211,9 @@ const stancePrompts = {
 
     try {
       const [r1, r2, r3] = await Promise.all([
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pInsta, filePath: path }) }),
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pFb,    filePath: path }) }),
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pX,     filePath: path }) }),
+        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pInsta + (imageNote ? `\n【補足説明】${imageNote}` : ''),filePath: path }) })
+        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pFb + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pX + (imageNote ? `\n【補足説明】${imageNote}` : ''),
       ]);
       const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
       if (j1?.error || j2?.error || j3?.error) throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
@@ -363,6 +364,20 @@ const stancePrompts = {
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
           <label style={labelStyle}>画像ファイル</label>
           <input
+            {/* 補足説明欄 */}
+<label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
+<textarea
+  style={{
+    ...inputStyle,
+    height: 72,
+    resize: 'vertical',
+    whiteSpace: 'pre-wrap'
+  }}
+  placeholder="例：地域イベントで撮影した写真。子どもたちが作った作品展示の様子。"
+  value={imageNote}
+  onChange={e => setImageNote(e.target.value)}
+/>
+
             type="file"
             accept="image/*"
             onChange={e => {
