@@ -46,7 +46,7 @@ export default function UPage() {
     })();
   }, []);
 
-  // ===== THEME（落ち着いたリッチ配色） =====
+  // ===== THEME =====
   const colors = {
     pageBg: '#FCFAF5',
     ink: '#111111',
@@ -148,7 +148,7 @@ export default function UPage() {
     }
   };
 
-  // ===== URL → まとめて生成 =====
+  // ===== URL → SNS生成 =====
   const generateFromURL = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!urlInput) { alert('URLを入力してください'); return; }
@@ -183,7 +183,7 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS =====
+  // ===== 画像 → SNS生成 =====
   const generateFromImage = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!imageFile) { alert('画像を選択してください'); return; }
@@ -282,7 +282,7 @@ export default function UPage() {
       </h2>
 
       {/* ===== ① URLからSNS生成 ===== */}
-      {/* （省略：URL生成ブロックは現行のままでOK） */}
+      {/* 既存のURL生成ブロックをここに保持（省略可） */}
 
       {/* ===== ② 画像からSNS生成 ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
@@ -291,9 +291,6 @@ export default function UPage() {
         </h3>
 
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          <label style={labelStyle}>画像ファイル</label>
-
-          {/* 補足説明欄 */}
           <label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
           <textarea
             style={{
@@ -307,6 +304,7 @@ export default function UPage() {
             onChange={e => setImageNote(e.target.value)}
           />
 
+          <label style={labelStyle}>画像ファイル</label>
           <input
             type="file"
             accept="image/*"
@@ -333,13 +331,10 @@ export default function UPage() {
             </button>
           </div>
         </div>
-
-        {/* SNS結果欄（Instagram / Facebook / X） */}
-        {/* ここはあなたの既存コードそのままでOK */}
       </div>
 
       {/* ===== ③ 通常チャット ===== */}
-      {/* （既存通り） */}
+      {/* 既存のチャット部分そのままでOK */}
     </main>
   );
 }
