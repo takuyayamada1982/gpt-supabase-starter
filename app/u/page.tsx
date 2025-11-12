@@ -9,6 +9,18 @@ export default function UPage() {
   const [userId, setUserId] = useState<string>('');
 
   // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
+  // ▼▼▼ これを URL用 useState 群の直後に追加 ▼▼▼
+const [stance, setStance] = useState<'self' | 'others' | 'third'>('self');
+
+const stancePrompts = {
+  self:
+    'あなたは投稿者本人です。自分が作成したSNS記事を紹介する立場で、要約とSNS投稿文を作成してください。主語は「私」「当方」でも自然に。過度な自画自賛は避けつつ、背景やねらい、見どころを簡潔に添えてください。',
+  others:
+    'あなたは第三者として、他人のSNS記事を自分のフォロワーに紹介します。著者へのリスペクトを示し、出典・引用であることを明確にしつつ、紹介者としての簡単な一言コメントを添えてください。',
+  third:
+    'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。'
+} as const;
+
   const [urlInput, setUrlInput] = useState('');
   const [urlLoading, setUrlLoading] = useState(false);
   const [urlSummary, setUrlSummary] = useState('');
@@ -146,10 +158,15 @@ export default function UPage() {
     setUrlLoading(true);
     try {
       const res = await fetch('/api/url', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ userId, url: urlInput })
-      });
+  method: 'POST',
+  headers: {'Content-Type':'application/json'},
+  body: JSON.stringify({
+    userId,
+    url: urlInput,
+    promptContext: stancePrompts[stance]  // ★ 追加
+  })
+});
+
       const j = await res.json();
       if (j?.error) throw new Error(j.error);
 
@@ -230,25 +247,66 @@ export default function UPage() {
       {/* ===== ① URL → 生成（上段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
         <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>① URLからSNS向け文章を自動生成</h3>
-        <div style={{ display:'grid', gap:8, marginBottom:12 }}>
-          <label style={labelStyle}>記事やブログのURL</label>
-          <input
-            style={inputStyle}
-            placeholder="https://example.com/article"
-            value={urlInput}
-            onChange={e=>setUrlInput(e.target.value)}
-            inputMode="url"
-          />
-          <div>
-            <button
-              style={urlLoading ? btnGhost : btn}
-              disabled={!urlInput || urlLoading}
-              onClick={generateFromURL}
-            >
-              {urlLoading ? '生成中…' : 'URLから3種類の原稿を作る'}
-            </button>
-          </div>
-        </div>
+       <div style={{ display:'grid', gap:8, marginBottom:12 }}>
+  <label style={labelStyle}>記事やブログのURL</label>
+  <input
+    style={inputStyle}
+    placeholder="https://example.com/article"
+    value={urlInput}
+    onChange={e=>setUrlInput(e.target.value)}
+    inputMode="url"
+  />
+
+  {/* ▼ ラジオボタン：投稿の立場を選択 */}
+  <div style={{ marginTop: 4 }}>
+    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: '#374151' }}>
+      紹介する立場を選んでください
+    </div>
+    <div style={{ display:'grid', gap:6 }}>
+      <label style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <input
+          type="radio"
+          name="stance"
+          value="self"
+          checked={stance === 'self'}
+          onChange={() => setStance('self')}
+        />
+        ① 自分が作成したSNS記事を紹介（自分目線）
+      </label>
+      <label style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <input
+          type="radio"
+          name="stance"
+          value="others"
+          checked={stance === 'others'}
+          onChange={() => setStance('others')}
+        />
+        ② 他人のSNS記事を自分が紹介（紹介者目線）
+      </label>
+      <label style={{ display:'flex', alignItems:'center', gap:8 }}>
+        <input
+          type="radio"
+          name="stance"
+          value="third"
+          checked={stance === 'third'}
+          onChange={() => setStance('third')}
+        />
+        ③ 第三者の記事を紹介（中立・客観）
+      </label>
+    </div>
+  </div>
+
+  <div>
+    <button
+      style={urlLoading ? btnGhost : btn}
+      disabled={!urlInput || urlLoading}
+      onClick={generateFromURL}
+    >
+      {urlLoading ? '生成中…' : 'URLから3種類の原稿を作る'}
+    </button>
+  </div>
+</div>
+
 
         {/* 要約・タイトル案・ハッシュタグ候補（URL生成後に表示） */}
         {(urlSummary || urlTitles.length || urlHashtags.length) ? (
