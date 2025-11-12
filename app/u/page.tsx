@@ -3,23 +3,12 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-type Msg = { role: 'user'|'assistant', content: string };
+type Msg = { role: 'user' | 'assistant', content: string };
 
 export default function UPage() {
   const [userId, setUserId] = useState<string>('');
 
   // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
-  const [stance, setStance] = useState<'self' | 'others' | 'third'>('self');
-
-  const stancePrompts = {
-    self:
-      'あなたは投稿者本人です。自分が作成したSNS記事を紹介する立場で、要約とSNS投稿文を作成してください。主語は「私」「当方」でも自然に。過度な自画自賛は避けつつ、背景やねらい、見どころを簡潔に添えてください。',
-    others:
-      'あなたは第三者として、他人のSNS記事を自分のフォロワーに紹介します。著者へのリスペクトを示し、出典・引用であることを明確にしつつ、紹介者としての簡単な一言コメントを添えてください。',
-    third:
-      'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。'
-  } as const;
-
   const [urlInput, setUrlInput] = useState('');
   const [urlLoading, setUrlLoading] = useState(false);
   const [urlSummary, setUrlSummary] = useState('');
@@ -29,10 +18,18 @@ export default function UPage() {
   const [fbText, setFbText] = useState('');
   const [xText, setXText] = useState('');
 
+  // ===== URL文脈選択（追加） =====
+  const [stance, setStance] = useState<'self' | 'others' | 'third'>('self');
+  const stancePrompts = {
+    self: 'あなたは投稿者本人です。自分のSNS記事を紹介する形で要約とSNS投稿文を作成してください。',
+    others: 'あなたは他人の投稿を紹介する立場です。投稿者への敬意を示しながら紹介してください。',
+    third: 'あなたは中立の立場です。第三者の記事を客観的に要約し、読む価値を伝えてください。'
+  } as const;
+
   // ===== 画像 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [imageNote, setImageNote] = useState('');
+  const [imageNote, setImageNote] = useState(''); // 追加：補足説明欄
 
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
@@ -46,7 +43,7 @@ export default function UPage() {
     })();
   }, []);
 
-  // ===== THEME =====
+  // ===== THEME（デザイン共通） =====
   const colors = {
     pageBg: '#FCFAF5',
     ink: '#111111',
@@ -82,8 +79,7 @@ export default function UPage() {
     border: `1px solid ${colors.panelBorder}`,
     borderRadius: 14,
     padding: 16,
-    boxShadow: colors.panelShadow,
-    overflow: 'hidden'
+    boxShadow: colors.panelShadow
   };
 
   const btn: React.CSSProperties = {
@@ -107,8 +103,8 @@ export default function UPage() {
     padding: 12,
     borderRadius: 10,
     width: '100%',
-    boxSizing: 'border-box',
-    background: '#FFFFFF'
+    background: '#FFFFFF',
+    boxSizing: 'border-box'
   };
   const labelStyle: React.CSSProperties = {
     fontSize: 12,
@@ -117,56 +113,33 @@ export default function UPage() {
     display: 'block'
   };
 
-  const cardGrid: React.CSSProperties = {
-    display: 'grid',
-    gap: 12,
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))'
-  };
-
-  const snsCardBase: React.CSSProperties = {
-    borderRadius: 12,
-    padding: 12,
-    boxSizing: 'border-box',
-    overflow: 'hidden'
-  };
-
   const textAreaStyle: React.CSSProperties = {
     ...inputStyle,
     height: 160,
     resize: 'vertical',
-    overflow: 'auto',
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word'
   };
 
   const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      alert('コピーしました');
-    } catch {
-      alert('コピーに失敗しました');
-    }
+    try { await navigator.clipboard.writeText(text); alert('コピーしました'); }
+    catch { alert('コピーに失敗しました'); }
   };
 
-  // ===== URL → SNS生成 =====
+  // ===== URL → 自動生成 =====
   const generateFromURL = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!urlInput) { alert('URLを入力してください'); return; }
-
     setUrlLoading(true);
+
     try {
       const res = await fetch('/api/url', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          url: urlInput,
-          promptContext: stancePrompts[stance]
-        })
+        body: JSON.stringify({ userId, url: urlInput, promptContext: stancePrompts[stance] })
       });
-
       const j = await res.json();
-      if (j?.error) throw new Error(j.error);
+      if (j.error) throw new Error(j.error);
 
       setUrlSummary(j.summary || '');
       setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
@@ -174,7 +147,6 @@ export default function UPage() {
       setInstaText(j.instagram || '');
       setFbText(j.facebook || '');
       setXText(j.x || '');
-
       alert('URLからSNS向け文章を生成しました');
     } catch (e: any) {
       alert(`エラー: ${e.message}`);
@@ -187,12 +159,8 @@ export default function UPage() {
   const generateFromImage = async () => {
     if (!userId) { alert('ログインが必要です'); return; }
     if (!imageFile) { alert('画像を選択してください'); return; }
-    if ((imageFile.type || '').toLowerCase().includes('heic') || (imageFile.type || '').toLowerCase().includes('heif')) {
-      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
-      return;
-    }
-    if (imageFile.size > 8 * 1024 * 1024) {
-      alert('画像は8MB以下でお願いします。');
+    if ((imageFile.type || '').includes('heic')) {
+      alert('HEICは非対応です。スクショまたは互換モードで保存してください。');
       return;
     }
 
@@ -202,15 +170,11 @@ export default function UPage() {
       upsert: true,
       contentType: imageFile.type || 'image/jpeg'
     });
-    if (up.error) {
-      alert(`アップロード失敗：${up.error.message}`);
-      setIsGenerating(false);
-      return;
-    }
+    if (up.error) { alert(`アップロード失敗：${up.error.message}`); setIsGenerating(false); return; }
 
-    const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
-    const pFb = `Facebook向け：ストーリー重視で約700文字。改行。最後に3〜6個のハッシュタグ。`;
-    const pX = `X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。`;
+    const pInsta = 'Instagram向け：約200文字。最後に3〜6個のハッシュタグ。';
+    const pFb = 'Facebook向け：約700文字。最後に3〜6個のハッシュタグ。';
+    const pX = 'X向け：150文字程度で簡潔に。';
 
     try {
       const [r1, r2, r3] = await Promise.all([
@@ -244,9 +208,7 @@ export default function UPage() {
       ]);
 
       const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
-      if (j1?.error || j2?.error || j3?.error) {
-        throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
-      }
+      if (j1.error || j2.error || j3.error) throw new Error('生成に失敗しました');
 
       setInstaText(j1.text || '');
       setFbText(j2.text || '');
@@ -275,66 +237,60 @@ export default function UPage() {
     setChatLoading(false);
   };
 
+  // ===== UI =====
   return (
     <main style={pageStyle}>
-      <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12, color: colors.ink }}>
-        ユーザーページ
-      </h2>
+      <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12 }}>ユーザーページ</h2>
 
-      {/* ===== ① URLからSNS生成 ===== */}
-      {/* 既存のURL生成ブロックをここに保持（省略可） */}
-
-      {/* ===== ② 画像からSNS生成 ===== */}
+      {/* ① URL生成 */}
       <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>
-          ② 画像からSNS向け文章を自動生成
-        </h3>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>① URLからSNS向け文章を自動生成</h3>
+        <label style={labelStyle}>記事URLを入力</label>
+        <input style={inputStyle} placeholder="https://example.com/article" value={urlInput} onChange={e => setUrlInput(e.target.value)} />
 
-        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          <label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
-          <textarea
-            style={{
-              ...inputStyle,
-              height: 72,
-              resize: 'vertical',
-              whiteSpace: 'pre-wrap'
-            }}
-            placeholder="例：地域イベントで撮影した写真。子どもたちが作った作品展示の様子。"
-            value={imageNote}
-            onChange={e => setImageNote(e.target.value)}
-          />
-
-          <label style={labelStyle}>画像ファイル</label>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={e => {
-              const f = e.target.files?.[0] || null;
-              if (!f) { setImageFile(null); return; }
-              const t = (f.type || '').toLowerCase();
-              if (t.includes('heic') || t.includes('heif')) {
-                alert('HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。');
-                (e.currentTarget as HTMLInputElement).value = '';
-                setImageFile(null);
-                return;
-              }
-              setImageFile(f);
-            }}
-          />
-          <div>
-            <button
-              style={isGenerating ? btnGhost : btn}
-              onClick={generateFromImage}
-              disabled={!imageFile || isGenerating}
-            >
-              {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
-            </button>
-          </div>
+        {/* 立場選択ラジオ */}
+        <div style={{ margin: '12px 0' }}>
+          <label style={labelStyle}>生成する視点</label>
+          <label><input type="radio" name="stance" checked={stance === 'self'} onChange={() => setStance('self')} /> 自分の投稿を紹介する</label><br />
+          <label><input type="radio" name="stance" checked={stance === 'others'} onChange={() => setStance('others')} /> 他人の投稿を紹介する</label><br />
+          <label><input type="radio" name="stance" checked={stance === 'third'} onChange={() => setStance('third')} /> 第三者の記事を紹介する</label>
         </div>
+
+        <button style={urlLoading ? btnGhost : btn} disabled={!urlInput || urlLoading} onClick={generateFromURL}>
+          {urlLoading ? '生成中…' : 'URLから文章を生成'}
+        </button>
+
+        {/* 要約など（省略） */}
       </div>
 
-      {/* ===== ③ 通常チャット ===== */}
-      {/* 既存のチャット部分そのままでOK */}
+      {/* ② 画像生成 */}
+      <div style={{ ...panel, marginBottom: 16 }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>② 画像からSNS向け文章を自動生成</h3>
+        <label style={labelStyle}>補足説明（写真の状況など3行程度）</label>
+        <textarea style={{ ...inputStyle, height: 80 }} placeholder="例：地域イベントで撮影。子ども達が作った作品展示の様子。" value={imageNote} onChange={e => setImageNote(e.target.value)} />
+        <input type="file" accept="image/*" onChange={e => setImageFile(e.target.files?.[0] || null)} />
+        <button style={isGenerating ? btnGhost : btn} disabled={!imageFile || isGenerating} onClick={generateFromImage}>
+          {isGenerating ? '生成中…' : '画像から文章を生成'}
+        </button>
+      </div>
+
+      {/* ③ チャット */}
+      <div style={{ ...panel }}>
+        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>③ 通常チャット</h3>
+        <textarea style={{ ...inputStyle, height: 96 }} value={chatInput} onChange={e => setChatInput(e.target.value)} placeholder="例: Instagram用に150文字で要約して" />
+        <button style={chatLoading ? btnGhost : btn} disabled={!chatInput || chatLoading} onClick={sendChat}>
+          {chatLoading ? '送信中…' : '送信'}
+        </button>
+        <div style={{ marginTop: 12 }}>
+          {messages.map((m, i) => (
+            <div key={i} style={{ border: '1px solid #eee', borderRadius: 10, padding: 10, background: m.role === 'user' ? '#F0F9FF' : '#FAFAFA' }}>
+              <div style={{ fontSize: 12, color: '#6b7280' }}>{m.role}</div>
+              <div>{m.content}</div>
+              {m.role === 'assistant' && <button style={btnGhost} onClick={() => copy(m.content)}>コピー</button>}
+            </div>
+          ))}
+        </div>
+      </div>
     </main>
   );
 }
