@@ -210,19 +210,37 @@ const stancePrompts = {
     const pX     = `X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。`;
 
     try {
-      const [r1, r2, r3] = await Promise.all([
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pInsta + (imageNote ? `\n【補足説明】${imageNote}` : ''),filePath: path }) })
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pFb + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pX + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-      ]);
-      const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
-      if (j1?.error || j2?.error || j3?.error) throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
-      setInstaText(j1.text || ''); setFbText(j2.text || ''); setXText(j3.text || '');
-      alert('SNS向け文章を生成しました');
-    } catch (e:any) {
-      alert(`エラー: ${e.message}`);
-    } finally { setIsGenerating(false); }
-  };
+  const payload = (prompt: string) => ({
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId,
+      prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+      filePath: path
+    })
+  });
+
+  const [r1, r2, r3] = await Promise.all([
+    fetch('/api/vision', payload(pInsta)),
+    fetch('/api/vision', payload(pFb)),
+    fetch('/api/vision', payload(pX)),
+  ]);
+
+  const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+  if (j1?.error || j2?.error || j3?.error) {
+    throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
+  }
+
+  setInstaText(j1.text || '');
+  setFbText(j2.text || '');
+  setXText(j3.text || '');
+  alert('SNS向け文章を生成しました');
+} catch (e: any) {
+  alert(`エラー: ${e.message}`);
+} finally {
+  setIsGenerating(false);
+}
+
 
   // ===== チャット =====
   const sendChat = async () => {
