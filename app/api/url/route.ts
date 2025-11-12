@@ -26,7 +26,7 @@ function extractMainText(html: string): string {
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, url } = await req.json();
+    const { userId, url, promptContext } = await req.json();
     if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     if (!url) return NextResponse.json({ error: "url required" }, { status: 400 });
 
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       "あなたは日本語のプロ編集者兼SNSコピーライターです。出力は必ず有効なJSONのみ。説明文や余計な文字は一切出力しないでください。";
     const userPrompt = `
 以下の本文を要約し、タイトル候補・ハッシュタグ候補、さらにSNS向け原稿（Instagram/Facebook/X）を作成してください。
-
+${promptContext ? `\n【前提】${promptContext}\n` : ''}
 【本文（必要に応じて抜粋可）】
 ${content}
 
