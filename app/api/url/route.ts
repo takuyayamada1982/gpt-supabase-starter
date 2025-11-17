@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
 
     const instructions =
       'あなたはSNS運用アシスタントです。与えられたURLの記事をもとに、日本語でSNS向けの紹介コンテンツを作成します。' +
-      '実際の記事本文は参照できない可能性があるので、URLと前提条件から合理的な範囲で想像して構いません。';
+      '実際の記事本文は参照できない可能性があるので、URLと前提条件から記載されている内容で答えて、嘘は書かないでください。';
 
     // モデルには「JSONだけ返して」と明示しておく
     const userPrompt =
@@ -45,9 +45,9 @@ export async function POST(req: NextRequest) {
       `  "summary": "記事の要約（200〜300文字程度）",\n` +
       `  "titles": ["題名案1", "題名案2", "題名案3"],\n` +
       `  "hashtags": ["#タグ1", "#タグ2", "... 10〜15個"],\n` +
-      `  "x": "X（旧Twitter）向け投稿文（200〜280文字程度）",\n` +
+      `  "x": "X（旧Twitter）向け投稿文（150文字程度）",\n` +
       `  "instagram": "Instagram向け投稿文（感情多め・300〜400文字程度）",\n` +
-      `  "facebook": "Facebook向け投稿文（背景説明も少し足した400〜500文字程度）"\n` +
+      `  "facebook": "Facebook向け投稿文（背景説明も少し足した500〜700文字程度）"\n` +
       `}\n` +
       `JSON 以外の文字（例: 「以下が結果です」など）は一切出力しないでください。`;
 
