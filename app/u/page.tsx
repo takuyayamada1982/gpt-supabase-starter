@@ -190,32 +190,56 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS =====
-  const generateFromImage = async () => {
-    if (!userId) { alert('ログインが必要です'); return; }
-    if (!imageFile) { alert('画像を選択してください'); return; }
-    if (
-      (imageFile.type || '').toLowerCase().includes('heic') ||
-      (imageFile.type || '').toLowerCase().includes('heif')
-    ) {
-      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
-      return;
-    }
-    if (imageFile.size > 8 * 1024 * 1024) {
-      alert('画像は8MB以下でお願いします。');
-      return;
-    }
+// ===== 画像 → SNS =====
+const generateFromImage = async () => {
+  if (!userId) {
+    alert('ログインが必要です');
+    return;
+  }
+  if (!imageFile) {
+    alert('画像を選択してください');
+    return;
+  }
+  if (
+    (imageFile.type || '').toLowerCase().includes('heic') ||
+    (imageFile.type || '').toLowerCase().includes('heif')
+  ) {
+    alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
+    return;
+  }
+  if (imageFile.size > 8 * 1024 * 1024) {
+    alert('画像は8MB以下でお願いします。');
+    return;
+  }
 
-    setIsGenerating(true);
-    const path = `${userId}/${Date.now()}_${imageFile.name}`;
+  setIsGenerating(true);
+
+  try {
+    // ✅ 日本語やスペースを含まない安全なファイル名にする
+    const ext = imageFile.name.split('.').pop() || 'jpg';
+    const safeFileName = `${Date.now()}.${ext}`;       // 例: 1731920000000.jpg
+    const path = `${userId}/${safeFileName}`;          // 例: userId/1731920000000.jpg
+
+    // Supabase Storage にアップロード
     const up = await supabase.storage.from('uploads').upload(path, imageFile, {
       upsert: true,
-      contentType: imageFile.type || 'image/jpeg'
+      contentType: imageFile.type || 'image/jpeg',
     });
+
     if (up.error) {
       alert(`アップロード失敗：${up.error.message}`);
       setIsGenerating(false);
       return;
+    }
+
+    // ✅ 公開URLを取得 → これを /api/vision に渡す
+    const { data: publicData } = supabase.storage
+      .from('uploads')
+      .getPublicUrl(path);
+
+    const imageUrl = publicData.publicUrl;
+    if (!imageUrl) {
+      throw new Error('画像URLの取得に失敗しました');
     }
 
     const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
@@ -227,34 +251,35 @@ export default function UPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         userId,
-        prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''), // 🔹補足説明も渡す
-        filePath: path
-      })
+        prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+        imageUrl,   // 👈 ここが imageUrl（文字列URL）になった
+      }),
     });
 
-    try {
-      const [r1, r2, r3] = await Promise.all([
-        fetch('/api/vision', payload(pInsta)),
-        fetch('/api/vision', payload(pFb)),
-        fetch('/api/vision', payload(pX)),
-      ]);
-      const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+    const [r1, r2, r3] = await Promise.all([
+      fetch('/api/vision', payload(pInsta)),
+      fetch('/api/vision', payload(pFb)),
+      fetch('/api/vision', payload(pX)),
+    ]);
+    const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), j3 = r3.json()]);
 
-      if (j1?.error || j2?.error || j3?.error) {
-        throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
-      }
-
-      setInstaText(j1.text || '');
-      setFbText(j2.text || '');
-      setXText(j3.text || '');
-
-      alert('SNS向け文章を生成しました');
-    } catch (e: any) {
-      alert(`エラー: ${e.message}`);
-    } finally {
-      setIsGenerating(false);
+    if (j1?.error || j2?.error || j3?.error) {
+      throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
     }
-  };
+
+    setInstaText(j1.text || '');
+    setFbText(j2.text || '');
+    setXText(j3.text || '');
+
+    alert('SNS向け文章を生成しました');
+  } catch (e: any) {
+    console.error(e);
+    alert(`エラー: ${e.message}`);
+  } finally {
+    setIsGenerating(false);
+  }
+};
+
 
   // ===== チャット =====
   const sendChat = async () => {
