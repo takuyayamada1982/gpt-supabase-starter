@@ -215,31 +215,22 @@ const generateFromImage = async () => {
   setIsGenerating(true);
 
   try {
-    // ✅ 日本語やスペースを含まない安全なファイル名にする
+    // 日本語・スペースのない安全なファイル名
     const ext = imageFile.name.split('.').pop() || 'jpg';
-    const safeFileName = `${Date.now()}.${ext}`;       // 例: 1731920000000.jpg
-    const path = `${userId}/${safeFileName}`;          // 例: userId/1731920000000.jpg
+    const safeFileName = `${Date.now()}.${ext}`;
+    const path = `${userId}/${safeFileName}`; // Supabase に保存する filePath
 
-    // Supabase Storage にアップロード
-    const up = await supabase.storage.from('uploads').upload(path, imageFile, {
-      upsert: true,
-      contentType: imageFile.type || 'image/jpeg',
-    });
+    // 一時的に Supabase にアップロード
+    const up = await supabase.storage
+      .from('uploads')
+      .upload(path, imageFile, {
+        upsert: true,
+        contentType: imageFile.type || 'image/jpeg',
+      });
 
     if (up.error) {
       alert(`アップロード失敗：${up.error.message}`);
-      setIsGenerating(false);
       return;
-    }
-
-    // ✅ 公開URLを取得 → これを /api/vision に渡す
-    const { data: publicData } = supabase.storage
-      .from('uploads')
-      .getPublicUrl(path);
-
-    const imageUrl = publicData.publicUrl;
-    if (!imageUrl) {
-      throw new Error('画像URLの取得に失敗しました');
     }
 
     const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
@@ -252,7 +243,7 @@ const generateFromImage = async () => {
       body: JSON.stringify({
         userId,
         prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-        imageUrl,   // 👈 ここが imageUrl（文字列URL）になった
+        filePath: path, // ← ここだけ渡す
       }),
     });
 
@@ -261,10 +252,17 @@ const generateFromImage = async () => {
       fetch('/api/vision', payload(pFb)),
       fetch('/api/vision', payload(pX)),
     ]);
-    const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+
+    const [j1, j2, j3] = await Promise.all([
+      r1.json(),
+      r2.json(),
+      r3.json(),
+    ]);
 
     if (j1?.error || j2?.error || j3?.error) {
-      throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
+      throw new Error(
+        j1?.error || j2?.error || j3?.error || '生成に失敗しました'
+      );
     }
 
     setInstaText(j1.text || '');
