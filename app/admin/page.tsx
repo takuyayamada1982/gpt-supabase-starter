@@ -1,437 +1,636 @@
+// app/admin/page.tsx
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-type Msg = { role: 'user'|'assistant', content: string };
+// profiles テーブルの型（最低限）
+type Profile = {
+  id: string;
+  email: string | null;
+  is_master: boolean | null;
+  registered_at: string | null;
+  deleted_at: string | null;
+};
 
-export default function UPage() {
-  const [userId, setUserId] = useState<string>('');
+// usage_logs テーブルの型（最低限）
+type UsageLog = {
+  user_id: string;
+  type: 'url' | 'vision' | 'chat' | string;
+  created_at: string;
+};
 
-  // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
-  const [urlInput, setUrlInput] = useState('');
-  const [urlLoading, setUrlLoading] = useState(false);
-  const [urlSummary, setUrlSummary] = useState('');
-  const [urlTitles, setUrlTitles] = useState<string[]>([]);
-  const [urlHashtags, setUrlHashtags] = useState<string[]>([]);
-  const [instaText, setInstaText] = useState('');
-  const [fbText, setFbText] = useState('');
-  const [xText, setXText] = useState('');
+type MonthOption = {
+  label: string; // 例: "2025年11月"
+  value: string; // 例: "2025-11"
+  start: string; // "YYYY-MM-01T00:00:00Z" 相当
+  end: string;   // 翌月1日
+};
 
-  // ===== 画像 → SNS =====
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
+// ★ 金額設定（必要に応じて調整してください）
+const PRICE_URL = 5;     // URL要約 1回あたり 5円（仮）
+const PRICE_VISION = 15; // 画像API 1回あたり 15円（仮）
+const PRICE_CHAT = 2;    // チャット 1回あたり 2円（仮）
 
-  // ===== チャット =====
-  const [chatInput, setChatInput] = useState('');
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [chatLoading, setChatLoading] = useState(false);
+// ★ 過去24ヶ月分の「月」選択肢を作る
+function buildMonthOptions(): MonthOption[] {
+  const now = new Date();
+  const options: MonthOption[] = [];
 
+  // 現在の月を 0 番目として 24 ヶ月分
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const month = d.getMonth(); // 0-11
+    const label = `${year}年${month + 1}月`;
+    const value = `${year}-${String(month + 1).padStart(2, '0')}`;
+
+    const startDate = new Date(year, month, 1);
+    const endDate = new Date(year, month + 1, 1);
+
+    options.push({
+      label,
+      value,
+      start: startDate.toISOString(),
+      end: endDate.toISOString(),
+    });
+  }
+  return options;
+}
+
+export default function AdminPage() {
+  const [loading, setLoading] = useState(true);
+  const [authStatus, setAuthStatus] = useState<'checking' | 'no-login' | 'no-master' | 'ok'>('checking');
+
+  const [profiles, setProfiles] = useState<Profile[]>([]);
+  const [usageLogs, setUsageLogs] = useState<UsageLog[]>([]);
+
+  const monthOptions = useMemo(() => buildMonthOptions(), []);
+  const [selectedMonth, setSelectedMonth] = useState<string>(monthOptions[0]?.value || '');
+
+  // =========================================
+  // 1. 認証 & マスター権限チェック
+  // =========================================
   useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      setUserId(data.user?.id || '');
-    })();
+    const checkAuth = async () => {
+      const { data: auth } = await supabase.auth.getUser();
+      const user = auth?.user;
+      if (!user) {
+        setAuthStatus('no-login');
+        setLoading(false);
+        return;
+      }
+
+      const { data: myProfile, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (error || !myProfile) {
+        console.error('profiles 取得エラー', error);
+        setAuthStatus('no-master');
+        setLoading(false);
+        return;
+      }
+
+      if (!myProfile.is_master) {
+        setAuthStatus('no-master');
+        setLoading(false);
+        return;
+      }
+
+      // マスター権限OK
+      setAuthStatus('ok');
+      setLoading(false);
+    };
+
+    checkAuth();
   }, []);
 
-  // ===== THEME（落ち着いたリッチ配色） =====
-  const colors = {
-    pageBg: '#FCFAF5',         // ページ背景（薄いクリーム）
-    ink: '#111111',
-    panelBorder: '#E5E7EB',
-    panelBg: '#FFFFFF',
-    panelShadow: '0 6px 20px rgba(0,0,0,0.06)',
+  // =========================================
+  // 2. 選択中の月のデータ取得
+  // =========================================
+  useEffect(() => {
+    const fetchData = async () => {
+      if (authStatus !== 'ok' || !selectedMonth) return;
 
-    // SNSカードの配色（淡い背景 + 枠 + 文字）
-    igBg: '#FFF5F9',
-    igBorder: '#F8C2D8',
-    igText: '#3B1C2A',
+      const month = monthOptions.find((m) => m.value === selectedMonth);
+      if (!month) return;
 
-    fbBg: '#F3F8FF',
-    fbBorder: '#BBD5FF',
-    fbText: '#0F2357',
+      // profiles 全件
+      const { data: profilesData, error: pError } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('registered_at', { ascending: true });
 
-    xBg: '#F7F7F8',
-    xBorder: '#D6D6DA',
-    xText: '#111111',
+      if (pError) {
+        console.error('profiles 取得エラー', pError);
+        return;
+      }
 
-    // ボタン
-    btnBg: '#111111',
-    btnText: '#FFFFFF',
-    btnBorder: '#111111',
-    btnGhostBorder: '#DDDDDD',
-    btnGhostBg: '#FFFFFF'
-  };
+      setProfiles(profilesData || []);
 
-  const pageStyle: React.CSSProperties = {
-    maxWidth: 1080,
-    margin: '0 auto',
-    padding: 16,
-    background: colors.pageBg,
-    boxSizing: 'border-box'
-  };
+      // usage_logs を該当月のみ
+      const { data: logsData, error: lError } = await supabase
+        .from('usage_logs')
+        .select('user_id, type, created_at')
+        .gte('created_at', month.start)
+        .lt('created_at', month.end);
 
-  const panel: React.CSSProperties = {
-    background: colors.panelBg,
-    border: `1px solid ${colors.panelBorder}`,
-    borderRadius: 14,
-    padding: 16,
-    boxShadow: colors.panelShadow,
-    overflow: 'hidden'
-  };
+      if (lError) {
+        console.error('usage_logs 取得エラー', lError);
+        return;
+      }
 
-  const btn: React.CSSProperties = {
-    padding: '10px 14px',
-    borderRadius: 10,
-    border: `1px solid ${colors.btnBorder}`,
-    background: colors.btnBg,
-    color: colors.btnText,
-    fontWeight: 600
-  };
-  const btnGhost: React.CSSProperties = {
-    padding: '10px 14px',
-    borderRadius: 10,
-    border: `1px solid ${colors.btnGhostBorder}`,
-    background: colors.btnGhostBg,
-    color: colors.ink,
-    fontWeight: 600
-  };
-  const inputStyle: React.CSSProperties = {
-    border: `1px solid ${colors.btnGhostBorder}`,
-    padding: 12,
-    borderRadius: 10,
-    width: '100%',
-    boxSizing: 'border-box',
-    background: '#FFFFFF'
-  };
-  const labelStyle: React.CSSProperties = {
-    fontSize: 12,
-    color: '#6b7280',
-    marginBottom: 6,
-    display: 'block'
-  };
+      setUsageLogs(logsData || []);
+    };
 
-  const cardGrid: React.CSSProperties = {
-    display: 'grid',
-    gap: 12,
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))'
-  };
+    fetchData();
+  }, [authStatus, selectedMonth, monthOptions]);
 
-  const snsCardBase: React.CSSProperties = {
-    borderRadius: 12,
-    padding: 12,
-    boxSizing: 'border-box',
-    overflow: 'hidden'
-  };
+  // =========================================
+  // 3. 集計処理
+  // =========================================
 
-  const textAreaStyle: React.CSSProperties = {
-    ...inputStyle,
-    height: 160,
-    resize: 'vertical',
-    overflow: 'auto',
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word'
-  };
+  // ユーザー単位の集計
+  const userStats = useMemo(() => {
+    // user_id → { urlCount, visionCount, chatCount }
+    const map = new Map<
+      string,
+      { urlCount: number; visionCount: number; chatCount: number }
+    >();
 
-  const copy = async (text: string) => {
-    try { await navigator.clipboard.writeText(text); alert('コピーしました'); }
-    catch { alert('コピーに失敗しました'); }
-  };
-
-  // ===== URL → まとめて生成 =====
-  const generateFromURL = async () => {
-    if (!userId) { alert('ログインが必要です'); return; }
-    if (!urlInput) { alert('URLを入力してください'); return; }
-
-    setUrlLoading(true);
-    try {
-      const res = await fetch('/api/url', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ userId, url: urlInput })
-      });
-      const j = await res.json();
-      if (j?.error) throw new Error(j.error);
-
-      setUrlSummary(j.summary || '');
-      setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
-      setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
-
-      setInstaText(j.instagram || '');
-      setFbText(j.facebook || '');
-      setXText(j.x || '');
-
-      alert('URLからSNS向け文章を生成しました');
-    } catch (e:any) {
-      alert(`エラー: ${e.message}`);
-    } finally {
-      setUrlLoading(false);
+    for (const log of usageLogs) {
+      if (!map.has(log.user_id)) {
+        map.set(log.user_id, { urlCount: 0, visionCount: 0, chatCount: 0 });
+      }
+      const entry = map.get(log.user_id)!;
+      if (log.type === 'url') entry.urlCount++;
+      else if (log.type === 'vision') entry.visionCount++;
+      else if (log.type === 'chat') entry.chatCount++;
     }
-  };
 
-  // ===== 画像 → SNS =====
-  const generateFromImage = async () => {
-    if (!userId) { alert('ログインが必要です'); return; }
-    if (!imageFile) { alert('画像を選択してください'); return; }
-    if ((imageFile.type || '').toLowerCase().includes('heic') || (imageFile.type || '').toLowerCase().includes('heif')) {
-      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
-      return;
+    return map;
+  }, [usageLogs]);
+
+  // 全体集計（回数 & 金額）
+  const totalStats = useMemo(() => {
+    let totalUrl = 0;
+    let totalVision = 0;
+    let totalChat = 0;
+
+    for (const log of usageLogs) {
+      if (log.type === 'url') totalUrl++;
+      else if (log.type === 'vision') totalVision++;
+      else if (log.type === 'chat') totalChat++;
     }
-    if (imageFile.size > 8 * 1024 * 1024) { alert('画像は8MB以下でお願いします。'); return; }
 
-    setIsGenerating(true);
-    const path = `${userId}/${Date.now()}_${imageFile.name}`;
-    const up = await supabase.storage.from('uploads').upload(path, imageFile, {
-      upsert: true,
-      contentType: imageFile.type || 'image/jpeg'
-    });
-    if (up.error) { alert(`アップロード失敗：${up.error.message}`); setIsGenerating(false); return; }
+    const totalUrlCost = totalUrl * PRICE_URL;
+    const totalVisionCost = totalVision * PRICE_VISION;
+    const totalChatCost = totalChat * PRICE_CHAT;
+    const totalCost = totalUrlCost + totalVisionCost + totalChatCost;
 
-    const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
-    const pFb    = `Facebook向け：ストーリー重視で約700文字。改行。最後に3〜6個のハッシュタグ。`;
-    const pX     = `X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。`;
+    return {
+      totalUrl,
+      totalVision,
+      totalChat,
+      totalUrlCost,
+      totalVisionCost,
+      totalChatCost,
+      totalCost,
+    };
+  }, [usageLogs]);
 
-    try {
-      const [r1, r2, r3] = await Promise.all([
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pInsta, filePath: path }) }),
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pFb,    filePath: path }) }),
-        fetch('/api/vision', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ userId, prompt: pX,     filePath: path }) }),
-      ]);
-      const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
-      if (j1?.error || j2?.error || j3?.error) throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
-      setInstaText(j1.text || ''); setFbText(j2.text || ''); setXText(j3.text || '');
-      alert('SNS向け文章を生成しました');
-    } catch (e:any) {
-      alert(`エラー: ${e.message}`);
-    } finally { setIsGenerating(false); }
-  };
+  // グラフ用の最大値
+  const maxCount = Math.max(
+    1,
+    totalStats.totalUrl,
+    totalStats.totalVision,
+    totalStats.totalChat
+  );
+  const maxCost = Math.max(
+    1,
+    totalStats.totalUrlCost,
+    totalStats.totalVisionCost,
+    totalStats.totalChatCost
+  );
 
-  // ===== チャット =====
-  const sendChat = async () => {
-    if (!userId || !chatInput) return;
-    setChatLoading(true);
-    setMessages(m => [...m, { role:'user', content: chatInput }]);
-    const res = await fetch('/api/chat', {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ userId, userText: chatInput })
-    });
-    const j = await res.json();
-    setMessages(m => [...m, { role:'assistant', content: j.text || '' }]);
-    setChatInput(''); setChatLoading(false);
-  };
+  // =========================================
+  // 4. UI
+  // =========================================
+
+  if (loading || authStatus === 'checking') {
+    return (
+      <main style={{ maxWidth: 1080, margin: '0 auto', padding: 16 }}>
+        <p>読み込み中です…</p>
+      </main>
+    );
+  }
+
+  if (authStatus === 'no-login') {
+    return (
+      <main style={{ maxWidth: 1080, margin: '0 auto', padding: 16 }}>
+        <h2>管理画面</h2>
+        <p>ログインしていません。まずは /login からログインしてください。</p>
+      </main>
+    );
+  }
+
+  if (authStatus === 'no-master') {
+    return (
+      <main style={{ maxWidth: 1080, margin: '0 auto', padding: 16 }}>
+        <h2>管理画面</h2>
+        <p>このアカウントには管理者権限がありません。</p>
+      </main>
+    );
+  }
+
+  const monthLabel =
+    monthOptions.find((m) => m.value === selectedMonth)?.label || '';
 
   return (
-    <main style={pageStyle}>
-      <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12, color: colors.ink }}>
-        ユーザーページ
-      </h2>
+    <main
+      style={{
+        maxWidth: 1200,
+        margin: '0 auto',
+        padding: 16,
+        background: '#F3F4F6',
+        minHeight: '100vh',
+        boxSizing: 'border-box',
+      }}
+    >
+      <h1
+        style={{
+          fontSize: 24,
+          fontWeight: 800,
+          marginBottom: 12,
+        }}
+      >
+        管理者ダッシュボード
+      </h1>
 
-      {/* ===== ① URL → 生成（上段） ===== */}
-      <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>① URLからSNS向け文章を自動生成</h3>
-        <div style={{ display:'grid', gap:8, marginBottom:12 }}>
-          <label style={labelStyle}>記事やブログのURL</label>
-          <input
-            style={inputStyle}
-            placeholder="https://example.com/article"
-            value={urlInput}
-            onChange={e=>setUrlInput(e.target.value)}
-            inputMode="url"
-          />
+      {/* 月選択 & 概要 */}
+      <section
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+        }}
+      >
+        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
           <div>
-            <button
-              style={urlLoading ? btnGhost : btn}
-              disabled={!urlInput || urlLoading}
-              onClick={generateFromURL}
+            <div style={{ fontSize: 12, color: '#6B7280' }}>対象期間</div>
+            <select
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              style={{
+                marginTop: 4,
+                padding: '6px 10px',
+                borderRadius: 8,
+                border: '1px solid #D1D5DB',
+              }}
             >
-              {urlLoading ? '生成中…' : 'URLから3種類の原稿を作る'}
-            </button>
+              {monthOptions.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
-
-        {/* 要約・タイトル案・ハッシュタグ候補（URL生成後に表示） */}
-        {(urlSummary || urlTitles.length || urlHashtags.length) ? (
-          <div style={{ borderTop:'1px dashed #e5e7eb', marginTop:12, paddingTop:12, display:'grid', gap:12 }}>
-            {/* 要約 */}
-            {urlSummary && (
-              <div>
-                <div style={{ fontWeight:700, marginBottom:6, color: colors.ink }}>要約（200〜300文字）</div>
-                <div style={{ border:'1px solid #eee', borderRadius:10, padding:12, background:'#FAFAFA', whiteSpace:'pre-wrap' }}>
-                  {urlSummary}
-                </div>
-                <div style={{ marginTop:8 }}>
-                  <button style={btnGhost} onClick={()=>copy(urlSummary)}>要約をコピー</button>
-                </div>
-              </div>
-            )}
-
-            {/* タイトル案 */}
-            {urlTitles.length > 0 && (
-              <div>
-                <div style={{ fontWeight:700, marginBottom:6, color: colors.ink }}>タイトル案（3つ）</div>
-                <ul style={{ listStyle:'disc', paddingLeft:20, margin:0 }}>
-                  {urlTitles.map((t, i)=>(
-                    <li key={i} style={{ marginBottom:6, display:'flex', gap:8, alignItems:'flex-start' }}>
-                      <span style={{ flex:1 }}>{t}</span>
-                      <button style={btnGhost} onClick={()=>copy(t)}>コピー</button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
-            {/* ハッシュタグ候補 */}
-            {urlHashtags.length > 0 && (
-              <div>
-                <div style={{ fontWeight:700, marginBottom:6, color: colors.ink }}>ハッシュタグ候補（10〜15）</div>
-                <div style={{ display:'flex', flexWrap:'wrap', gap:8 }}>
-                  {urlHashtags.map((h, i)=>(
-                    <span key={i} style={{ border:'1px solid #eee', borderRadius:999, padding:'6px 10px', background:'#fff' }}>{h}</span>
-                  ))}
-                </div>
-                <div style={{ marginTop:8 }}>
-                  <button style={btnGhost} onClick={()=>copy(urlHashtags.join(' '))}>すべてコピー</button>
-                </div>
-              </div>
-            )}
-          </div>
-        ) : null}
-      </div>
-
-      {/* ===== ② 画像 → 生成（中段） ===== */}
-      <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>② 画像からSNS向け文章を自動生成</h3>
-        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          <label style={labelStyle}>画像ファイル</label>
-          <input
-            type="file"
-            accept="image/*"
-            onChange={e => {
-              const f = e.target.files?.[0] || null;
-              if (!f) { setImageFile(null); return; }
-              const t = (f.type || '').toLowerCase();
-              if (t.includes('heic') || t.includes('heif')) {
-                alert('HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。');
-                (e.currentTarget as HTMLInputElement).value = '';
-                setImageFile(null);
-                return;
-              }
-              setImageFile(f);
-            }}
-          />
           <div>
-            <button style={isGenerating ? btnGhost : btn} onClick={generateFromImage} disabled={!imageFile || isGenerating}>
-              {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
-            </button>
-          </div>
-        </div>
-
-        {/* 3カラム：SNS欄（URL生成でも画像生成でもここに反映） */}
-        <div style={cardGrid}>
-          {/* Instagram */}
-          <div
-            style={{
-              ...snsCardBase,
-              background: colors.igBg,
-              border: `1px solid ${colors.igBorder}`,
-              color: colors.igText
-            }}
-          >
-            <div style={{ fontWeight:800, marginBottom:6 }}>Instagram（約200文字＋ハッシュタグ）</div>
-            <textarea
-              style={{ ...textAreaStyle, background:'#FFFFFF' }}
-              value={instaText}
-              onChange={e=>setInstaText(e.target.value)}
-              placeholder="ここにInstagram向けの説明が入ります"
-            />
-            <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
-              <button style={btnGhost} onClick={() => copy(instaText)}>コピー</button>
+            <div style={{ fontSize: 12, color: '#6B7280' }}>登録アカウント数</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>
+              {profiles.length} 件
             </div>
           </div>
-
-          {/* Facebook */}
-          <div
-            style={{
-              ...snsCardBase,
-              background: colors.fbBg,
-              border: `1px solid ${colors.fbBorder}`,
-              color: colors.fbText
-            }}
-          >
-            <div style={{ fontWeight:800, marginBottom:6 }}>Facebook（ストーリー重視・約700文字＋ハッシュタグ）</div>
-            <textarea
-              style={{ ...textAreaStyle, height: 220, background:'#FFFFFF' }}
-              value={fbText}
-              onChange={e=>setFbText(e.target.value)}
-              placeholder="ここにFacebook向けの説明が入ります"
-            />
-            <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
-              <button style={btnGhost} onClick={() => copy(fbText)}>コピー</button>
-            </div>
-          </div>
-
-          {/* X / Twitter */}
-          <div
-            style={{
-              ...snsCardBase,
-              background: colors.xBg,
-              border: `1px solid ${colors.xBorder}`,
-              color: colors.xText
-            }}
-          >
-            <div style={{ fontWeight:800, marginBottom:6 }}>X（150文字コンパクト＋ハッシュタグ）</div>
-            <textarea
-              style={{ ...textAreaStyle, height: 140, background:'#FFFFFF' }}
-              value={xText}
-              onChange={e=>setXText(e.target.value)}
-              placeholder="ここにX向けの説明が入ります"
-            />
-            <div style={{ marginTop:8, display:'flex', gap:8, flexWrap:'wrap' }}>
-              <button style={btnGhost} onClick={() => copy(xText)}>コピー</button>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* ===== ③ 通常チャット（下段） ===== */}
-      <div style={{ ...panel }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>③ 通常チャット</h3>
-        <div style={{ display:'grid', gap:8, marginBottom:8 }}>
-          <label style={labelStyle}>記載例（そのまま書き換えてOK）</label>
-          <textarea
-            style={{ ...inputStyle, height: 96, resize:'vertical', overflow:'auto', whiteSpace:'pre-wrap' }}
-            placeholder={
-              '例: 「このテキストを要約して、X向けに150文字で」\n' +
-              '例: 「Instagram / Facebook / X それぞれのトーンで整えて」'
-            }
-            value={chatInput}
-            onChange={e => setChatInput(e.target.value)}
-          />
           <div>
-            <button style={chatLoading ? btnGhost : btn} disabled={chatLoading || !chatInput} onClick={sendChat}>
-              {chatLoading ? '送信中…' : '送信'}
-            </button>
+            <div style={{ fontSize: 12, color: '#6B7280' }}>今月の合計金額（概算）</div>
+            <div style={{ fontSize: 18, fontWeight: 700 }}>
+              ¥{totalStats.totalCost.toLocaleString()}
+            </div>
           </div>
         </div>
+      </section>
 
-        <div style={{ display:'grid', gap:8 }}>
-          {messages.map((m, i) => (
-            <div key={i} style={{
-              border:'1px solid #eee', borderRadius:10, padding:12,
-              background: m.role === 'user' ? '#F0F9FF' : '#F9FAFB'
-            }}>
-              <div style={{ fontSize:12, color:'#6b7280', marginBottom:4 }}>{m.role}</div>
-              <div style={{ whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{m.content}</div>
-              {m.role === 'assistant' && (
-                <div style={{ marginTop:8 }}>
-                  <button style={btnGhost} onClick={() => copy(m.content)}>この返信をコピー</button>
-                </div>
-              )}
+      {/* 全体グラフ（回数） */}
+      <section
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+        }}
+      >
+        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
+          全体利用回数（{monthLabel}）
+        </h2>
+        <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>
+          SNS要約（URL）・画像API・チャットの利用回数の合計です。
+        </p>
+
+        <div style={{ display: 'grid', gap: 8 }}>
+          {[
+            {
+              label: 'URL要約',
+              count: totalStats.totalUrl,
+              color: '#3B82F6',
+            },
+            {
+              label: '画像API',
+              count: totalStats.totalVision,
+              color: '#10B981',
+            },
+            {
+              label: 'チャット',
+              count: totalStats.totalChat,
+              color: '#F59E0B',
+            },
+          ].map((row) => (
+            <div key={row.label}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 12,
+                  marginBottom: 4,
+                }}
+              >
+                <span>{row.label}</span>
+                <span>{row.count} 回</span>
+              </div>
+              <div
+                style={{
+                  height: 10,
+                  borderRadius: 999,
+                  background: '#E5E7EB',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${(row.count / maxCount) * 100}%`,
+                    height: '100%',
+                    background: row.color,
+                    transition: 'width 0.3s',
+                  }}
+                />
+              </div>
             </div>
           ))}
         </div>
-      </div>
+      </section>
+
+      {/* 全体グラフ（金額） */}
+      <section
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 16,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+        }}
+      >
+        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
+          全体利用金額（概算・{monthLabel}）
+        </h2>
+        <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>
+          単価設定（URL: ¥{PRICE_URL} / 回、画像: ¥{PRICE_VISION} / 回、チャット: ¥{PRICE_CHAT} / 回）に基づく概算です。
+        </p>
+
+        <div style={{ display: 'grid', gap: 8 }}>
+          {[
+            {
+              label: 'URL要約',
+              cost: totalStats.totalUrlCost,
+              color: '#3B82F6',
+            },
+            {
+              label: '画像API',
+              cost: totalStats.totalVisionCost,
+              color: '#10B981',
+            },
+            {
+              label: 'チャット',
+              cost: totalStats.totalChatCost,
+              color: '#F59E0B',
+            },
+          ].map((row) => (
+            <div key={row.label}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: 12,
+                  marginBottom: 4,
+                }}
+              >
+                <span>{row.label}</span>
+                <span>¥{row.cost.toLocaleString()}</span>
+              </div>
+              <div
+                style={{
+                  height: 10,
+                  borderRadius: 999,
+                  background: '#E5E7EB',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: `${(row.cost / maxCost) * 100}%`,
+                    height: '100%',
+                    background: row.color,
+                    transition: 'width 0.3s',
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* アカウント一覧 */}
+      <section
+        style={{
+          background: '#FFFFFF',
+          borderRadius: 12,
+          padding: 16,
+          marginBottom: 32,
+          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
+        }}
+      >
+        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
+          アカウント別利用状況（{monthLabel}）
+        </h2>
+        <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>
+          各登録メールアドレスごとの利用回数・金額・権限・登録/解除日時を表示します。
+        </p>
+
+        <div style={{ overflowX: 'auto' }}>
+          <table
+            style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              fontSize: 12,
+            }}
+          >
+            <thead>
+              <tr style={{ background: '#F9FAFB' }}>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB', textAlign: 'left' }}>
+                  アカウントID（5桁）
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB', textAlign: 'left' }}>
+                  メールアドレス
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  マスター権限
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  URL要約
+                  <br />
+                  （回 / ¥）
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  画像API
+                  <br />
+                  （回 / ¥）
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  チャット
+                  <br />
+                  （回 / ¥）
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  合計金額
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  登録日時
+                </th>
+                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
+                  解除日時
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {profiles.map((p, index) => {
+                const stat = userStats.get(p.id) || {
+                  urlCount: 0,
+                  visionCount: 0,
+                  chatCount: 0,
+                };
+
+                const urlCost = stat.urlCount * PRICE_URL;
+                const visionCost = stat.visionCount * PRICE_VISION;
+                const chatCost = stat.chatCount * PRICE_CHAT;
+                const sumCost = urlCost + visionCost + chatCost;
+
+                // 5桁ID（表示用）
+                const accountId = String(index + 1).padStart(5, '0');
+
+                const formatDate = (value: string | null) =>
+                  value ? new Date(value).toLocaleString() : '-';
+
+                return (
+                  <tr key={p.id}>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {accountId}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {p.email || '-'}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        textAlign: 'center',
+                      }}
+                    >
+                      {p.is_master ? '✅' : ''}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {stat.urlCount} 回
+                      <br />
+                      ¥{urlCost.toLocaleString()}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {stat.visionCount} 回
+                      <br />
+                      ¥{visionCost.toLocaleString()}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        textAlign: 'right',
+                      }}
+                    >
+                      {stat.chatCount} 回
+                      <br />
+                      ¥{chatCost.toLocaleString()}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        textAlign: 'right',
+                        fontWeight: 700,
+                      }}
+                    >
+                      ¥{sumCost.toLocaleString()}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {formatDate(p.registered_at)}
+                    </td>
+                    <td
+                      style={{
+                        padding: 8,
+                        borderBottom: '1px solid #E5E7EB',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {formatDate(p.deleted_at)}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </main>
   );
 }
