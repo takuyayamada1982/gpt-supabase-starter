@@ -12,36 +12,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// HTML からざっくり本文を抜き出す簡易関数
-function extractMainText(html: string): string {
-  // script/style を削除
-  html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
-  html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
-
-  const title =
-    (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').trim();
-
-  const ogDesc =
-    html.match(
-      /<meta[^>]*property=["']og:description["'][^>]*content=["']([^"']+)["'][^>]*>/i
-    )?.[1] ||
-    html.match(
-      /<meta[^>]*name=["']description["'][^>]*content=["']([^"']+)["'][^>]*>/i
-    )?.[1] ||
-    '';
-
-  let text = html.replace(/<[^>]+>/g, ' ');
-  text = text.replace(/\s+/g, ' ').trim();
-
-  const head = [title, ogDesc].filter(Boolean).join(' / ');
-  const body = head ? `${head}\n\n${text}` : text;
-
-  return body.slice(0, 8000); // 安全のため最大8000文字
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const { userId, url, promptContext } = await req.json();
+    const { userId, url, userText } = await req.json();
 
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -50,69 +23,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'url required' }, { status: 400 });
     }
 
-    // URL から HTML 取得
-    const res = await fetch(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; URL-Extractor/1.0)',
-      },
-      // @ts-ignore
-      cache: 'no-store',
-    });
+    const instructions =
+      'あなたはSNS運用アシスタントです。与えられたURLと補足テキストをもとに、日本語でSNS向けの要約・投稿案を作成します。実際のページ内容は閲覧できない可能性があるため、URLと与えられた情報から合理的な範囲で推測して文章を作成してください。';
 
-    if (!res.ok) {
-      return NextResponse.json(
-        { error: `fetch failed: ${res.status}` },
-        { status: 502 }
-      );
-    }
-
-    const html = await res.text();
-    const content = extractMainText(html);
-
-    if (!content) {
-      return NextResponse.json(
-        { error: 'content empty' },
-        { status: 422 }
-      );
-    }
-
-    const system =
-      'あなたは日本語のプロ編集者兼SNSコピーライターです。出力は必ず有効なJSONのみ。説明文や余計な文字は一切出力しないでください。';
-
-    const userPrompt = `
-以下の本文を要約し、タイトル候補・ハッシュタグ候補、さらにSNS向け原稿（Instagram / Facebook / X）を作成してください。
-${promptContext ? `\n【前提】${promptContext}\n` : ''}
-
-【本文（必要に応じて抜粋可）】
-${content}
-
-【要件】
-- summary: 200〜300文字程度で要点を簡潔に日本語要約
-- titles: 3案（全角30文字前後を目安に、キャッチーに）
-- hashtags: 10〜15個（日本語/英語混在OK。#から始める）
-- instagram: 約200文字 + 文末に3〜6個のハッシュタグ
-- facebook: ストーリー重視で約700文字、適度に改行 + 文末に3〜6個のハッシュタグ
-- x: 約150文字、要点を端的に + 文末に2〜4個のハッシュタグ
-
-【出力JSONスキーマ】
-{
-  "summary": "…200〜300文字…",
-  "titles": ["…A…","…B…","…C…"],
-  "hashtags": ["#tag1","#tag2", "..."],
-  "instagram": "…本文＋ハッシュタグ…",
-  "facebook": "…本文＋ハッシュタグ…",
-  "x": "…本文＋ハッシュタグ…"
-}
-    `.trim();
+    const prompt =
+      `以下のURLについてSNS投稿案を作成してください。\n` +
+      `URL: ${url}\n\n` +
+      (userText
+        ? `補足情報:\n${userText}\n\n`
+        : '') +
+      '・日本語で\n・Twitter/X や Instagram投稿を想定\n・本文とハッシュタグ案も出力してください。';
 
     const ai = await openai.responses.create({
       model: 'gpt-4.1-mini',
+      instructions,
       input: [
-        { role: 'system', content: system },
-        { role: 'user', content: userPrompt },
+        {
+          role: 'user',
+          content: prompt,
+        },
       ],
-      max_output_tokens: 1600,
-      temperature: 0.6,
+      max_output_tokens: 1000,
+      temperature: 0.7,
     });
 
     // usage ログ（type = 'url'）
@@ -129,25 +61,8 @@ ${content}
     }
 
     const text = (ai as any).output_text ?? '';
-    let parsed: any;
 
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return NextResponse.json(
-        { error: 'invalid JSON from model', raw: text },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      summary: parsed.summary ?? '',
-      titles: Array.isArray(parsed.titles) ? parsed.titles : [],
-      hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags : [],
-      instagram: parsed.instagram ?? '',
-      facebook: parsed.facebook ?? '',
-      x: parsed.x ?? '',
-    });
+    return NextResponse.json({ text });
   } catch (e: any) {
     console.error(e);
     return NextResponse.json({ error: e.message }, { status: 500 });
