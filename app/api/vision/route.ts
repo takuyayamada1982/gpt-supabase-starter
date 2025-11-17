@@ -44,9 +44,9 @@ export async function POST(req: NextRequest) {
             },
             {
               type: 'input_image',
-              // ★ここが今回のポイント：
-              //   image_url は { url: ... } ではなく、string そのものを渡す
               image_url: imageUrl,
+              // ★ TypeScript が必須としているプロパティ
+              detail: 'auto', // 'low' や 'high' でもOK
             },
           ],
         },
