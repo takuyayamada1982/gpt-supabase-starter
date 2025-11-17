@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       x?: string;
       instagram?: string;
       facebook?: string;
-    };
+    } = {};
 
     try {
       parsed = JSON.parse(raw);
@@ -107,4 +107,17 @@ export async function POST(req: NextRequest) {
     // 安全にデフォルトを補う
     const result = {
       summary: parsed.summary ?? '',
-      titl
+      titles: Array.isArray(parsed.titles) ? parsed.titles : [],
+      hashtags: Array.isArray(parsed.hashtags) ? parsed.hashtags : [],
+      x: parsed.x ?? '',
+      instagram: parsed.instagram ?? '',
+      facebook: parsed.facebook ?? '',
+    };
+
+    // ここでフィールド別に返す → フロントが各SNS欄にセットしやすい形
+    return NextResponse.json(result);
+  } catch (e: any) {
+    console.error('API /api/url error', e);
+    return NextResponse.json({ error: e.message }, { status: 500 });
+  }
+}
