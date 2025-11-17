@@ -26,14 +26,17 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const system =
+    const instructions =
       'あなたはSNS運用アシスタントです。与えられた文章の要約、SNS向けリライト、投稿案作成などを日本語で手伝います。';
 
     const ai = await openai.responses.create({
       model: 'gpt-4.1-mini',
+      instructions,
       input: [
-        { role: 'system', content: system },
-        { role: 'user', content: userText },
+        {
+          role: 'user',
+          content: userText,
+        },
       ],
       max_output_tokens: 1000,
       temperature: 0.7,
