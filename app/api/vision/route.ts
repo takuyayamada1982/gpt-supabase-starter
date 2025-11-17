@@ -15,7 +15,7 @@ const supabase = createClient(
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, prompt, filePath, imageUrl } = await req.json();
+    const { userId, prompt, filePath } = await req.json();
 
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
@@ -23,61 +23,40 @@ export async function POST(req: NextRequest) {
     if (!prompt) {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 });
     }
+    if (!filePath || typeof filePath !== 'string') {
+      return NextResponse.json({ error: 'filePath required' }, { status: 400 });
+    }
 
-    // ---- 画像取得（基本は Supabase の filePath を優先）----
-    let imageDataBase64: string | null = null;
-    const pathToDelete =
-      typeof filePath === 'string' && filePath.length > 0 ? filePath : null;
+    // ---- 画像を Supabase から取得 ----
+    const { data, error } = await supabase.storage
+      .from('uploads') // ← バケット名
+      .download(filePath);
 
-    if (pathToDelete) {
-      // Supabase Storage から直接ダウンロード
-      const { data, error } = await supabase.storage
-        .from('uploads') // ← 画像を入れているバケット名
-        .download(pathToDelete);
-
-      if (error || !data) {
-        console.error('Supabase download error:', error);
-        return NextResponse.json(
-          { error: 'failed to download image from storage' },
-          { status: 400 }
-        );
-      }
-
-      const arrayBuffer = await data.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      imageDataBase64 = buffer.toString('base64');
-    } else if (imageUrl && typeof imageUrl === 'string') {
-      // フォールバック（今は基本使わない想定）
-      // 画像URLをそのまま OpenAI に渡す
-    } else {
+    if (error || !data) {
+      console.error('Supabase download error:', error);
       return NextResponse.json(
-        { error: 'filePath or imageUrl required' },
+        { error: 'failed to download image from storage' },
         { status: 400 }
       );
     }
 
-    // ---- OpenAI に渡す content を組み立て ----
+    const arrayBuffer = await data.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const imageDataBase64 = buffer.toString('base64');
+
+    // ---- OpenAI に渡す content ----
     const content: any[] = [
       {
         type: 'input_text',
         text: prompt as string,
       },
-    ];
-
-    if (imageDataBase64) {
-      // data URL で直接渡す → OpenAI 側でのダウンロード不要
-      content.push({
+      {
         type: 'input_image',
+        // 外部URLではなく data URL で渡すので「ダウンロードエラー」は起きない
         image_url: `data:image/jpeg;base64,${imageDataBase64}`,
         detail: 'low',
-      });
-    } else if (imageUrl && typeof imageUrl === 'string') {
-      content.push({
-        type: 'input_image',
-        image_url: imageUrl,
-        detail: 'low',
-      });
-    }
+      },
+    ];
 
     const ai = await openai.responses.create({
       model: 'gpt-4.1-mini',
@@ -106,18 +85,16 @@ export async function POST(req: NextRequest) {
 
     const text = (ai as any).output_text ?? '';
 
-    // ★★★ ここが今回の本題：生成後に画像を即削除 ★★★
-    if (pathToDelete) {
-      try {
-        const { error: delError } = await supabase.storage
-          .from('uploads')
-          .remove([pathToDelete]);
-        if (delError) {
-          console.error('failed to delete file after generation:', delError);
-        }
-      } catch (e) {
-        console.error('exception on delete file:', e);
+    // ★ 生成後に画像を即削除
+    try {
+      const { error: delError } = await supabase.storage
+        .from('uploads')
+        .remove([filePath]);
+      if (delError) {
+        console.error('failed to delete file after generation:', delError);
       }
+    } catch (e) {
+      console.error('exception on delete file:', e);
     }
 
     return NextResponse.json({ text });
