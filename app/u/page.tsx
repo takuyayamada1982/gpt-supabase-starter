@@ -261,7 +261,7 @@ const generateFromImage = async () => {
       fetch('/api/vision', payload(pFb)),
       fetch('/api/vision', payload(pX)),
     ]);
-    const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), j3 = r3.json()]);
+    const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
 
     if (j1?.error || j2?.error || j3?.error) {
       throw new Error(j1?.error || j2?.error || j3?.error || '生成に失敗しました');
