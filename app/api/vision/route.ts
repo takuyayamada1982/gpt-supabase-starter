@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+import { Buffer } from 'buffer';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -14,49 +15,79 @@ const supabase = createClient(
 
 export async function POST(req: NextRequest) {
   try {
-    const { userId, prompt, imageUrl } = await req.json();
+    const { userId, prompt, filePath, imageUrl } = await req.json();
 
-    // 認証チェック
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
+    if (!prompt) {
+      return NextResponse.json({ error: 'prompt required' }, { status: 400 });
+    }
 
-    // imageUrl は必須 & string URL 前提
-    if (!imageUrl || typeof imageUrl !== 'string') {
+    // ---- 画像取得（基本は Supabase の filePath を優先）----
+    let imageDataBase64: string | null = null;
+    const pathToDelete =
+      typeof filePath === 'string' && filePath.length > 0 ? filePath : null;
+
+    if (pathToDelete) {
+      // Supabase Storage から直接ダウンロード
+      const { data, error } = await supabase.storage
+        .from('uploads') // ← 画像を入れているバケット名
+        .download(pathToDelete);
+
+      if (error || !data) {
+        console.error('Supabase download error:', error);
+        return NextResponse.json(
+          { error: 'failed to download image from storage' },
+          { status: 400 }
+        );
+      }
+
+      const arrayBuffer = await data.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+      imageDataBase64 = buffer.toString('base64');
+    } else if (imageUrl && typeof imageUrl === 'string') {
+      // フォールバック（今は基本使わない想定）
+      // 画像URLをそのまま OpenAI に渡す
+    } else {
       return NextResponse.json(
-        { error: 'imageUrl (string URL) required' },
+        { error: 'filePath or imageUrl required' },
         { status: 400 }
       );
     }
 
-    const instructions =
-      'あなたは画像付きSNS投稿のアシスタントです。画像の内容を理解し、日本語で要約やSNS向けの投稿案を提案します。';
-
-    // 👇 型で怒られないように、input を一旦 any にする
-    const input: any = [
+    // ---- OpenAI に渡す content を組み立て ----
+    const content: any[] = [
       {
-        role: 'user',
-        content: [
-          {
-            type: 'input_text',
-            text:
-              prompt ||
-              'この画像の内容を説明し、SNS向けの投稿案を日本語で提案してください。',
-          },
-          {
-            type: 'input_image',
-            image_url: imageUrl, // 文字列 URL
-            detail: 'auto',      // SDK 型で必須になっている
-          },
-        ],
+        type: 'input_text',
+        text: prompt as string,
       },
     ];
 
+    if (imageDataBase64) {
+      // data URL で直接渡す → OpenAI 側でのダウンロード不要
+      content.push({
+        type: 'input_image',
+        image_url: `data:image/jpeg;base64,${imageDataBase64}`,
+        detail: 'low',
+      });
+    } else if (imageUrl && typeof imageUrl === 'string') {
+      content.push({
+        type: 'input_image',
+        image_url: imageUrl,
+        detail: 'low',
+      });
+    }
+
     const ai = await openai.responses.create({
       model: 'gpt-4.1-mini',
-      instructions,
-      input, // ← any なのでオーバーロードエラーが出ない
-      max_output_tokens: 1000,
+      input: [
+        {
+          role: 'user',
+          content,
+        },
+      ],
+      max_output_tokens: 400,
       temperature: 0.7,
     });
 
@@ -75,9 +106,23 @@ export async function POST(req: NextRequest) {
 
     const text = (ai as any).output_text ?? '';
 
+    // ★★★ ここが今回の本題：生成後に画像を即削除 ★★★
+    if (pathToDelete) {
+      try {
+        const { error: delError } = await supabase.storage
+          .from('uploads')
+          .remove([pathToDelete]);
+        if (delError) {
+          console.error('failed to delete file after generation:', delError);
+        }
+      } catch (e) {
+        console.error('exception on delete file:', e);
+      }
+    }
+
     return NextResponse.json({ text });
   } catch (e: any) {
-    console.error(e);
+    console.error('API /api/vision error', e);
     return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
