@@ -18,7 +18,9 @@ export async function POST(req: NextRequest){
     });
     const u: any = (res as any).usage;
     if(u){ await supabase.from('usage_logs').insert({
-      user_id: userId, model: (res as any).model ?? 'gpt-4.1-mini',
+      user_id: userId,
+      type: 'chat',  // ★ ここを追加（チャット用）
+      model: (res as any).model ?? 'gpt-4.1-mini',
       prompt_tokens: u.prompt_tokens ?? 0, completion_tokens: u.completion_tokens ?? 0, total_tokens: u.total_tokens ?? 0
     }); }
     const text = (res as any).output_text ?? '';
