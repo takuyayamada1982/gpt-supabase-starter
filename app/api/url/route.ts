@@ -83,6 +83,7 @@ ${content}
     if (usage) {
       await supabase.from("usage_logs").insert({
         user_id: userId,
+        type: 'url',  // ★ ここを追加（URL用）
         model: (ai as any).model ?? "gpt-4.1-mini",
         prompt_tokens: usage.prompt_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? 0,
