@@ -8,7 +8,7 @@ type Profile = {
   email: string | null;
   account_id: string | null;
   is_master: boolean | null;
-  created_at: string | null;
+  registered_at: string | null;   // ✅ created_at → registered_at に変更
 };
 
 export default function AdminPage() {
@@ -35,13 +35,15 @@ export default function AdminPage() {
       // 自分のプロフィールを取得
       const { data: myProfile, error: myProfileError } = await supabase
         .from('profiles')
-        .select('id, email, account_id, is_master, created_at')
+        .select('id, email, account_id, is_master, registered_at') // ✅ ここを修正
         .eq('id', authData.user.id)
         .single();
 
       if (myProfileError || !myProfile) {
         console.error(myProfileError);
-        setError('プロフィール情報の取得に失敗しました。profiles テーブルを確認してください。');
+        setError(
+          'プロフィール情報の取得に失敗しました。profiles テーブルと registered_at 列を確認してください。'
+        );
         setLoading(false);
         return;
       }
@@ -58,8 +60,8 @@ export default function AdminPage() {
       // 全ユーザー一覧を取得
       const { data: allProfiles, error: listError } = await supabase
         .from('profiles')
-        .select('id, email, account_id, is_master, created_at')
-        .order('created_at', { ascending: true });
+        .select('id, email, account_id, is_master, registered_at') // ✅ ここも修正
+        .order('registered_at', { ascending: true });
 
       if (listError) {
         console.error(listError);
@@ -125,7 +127,9 @@ export default function AdminPage() {
       <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
         <div className="max-w-md rounded-2xl bg-white border border-red-100 p-4 shadow">
           <div className="text-sm font-semibold text-red-600 mb-2">エラー</div>
-          <div className="text-xs text-slate-700 whitespace-pre-wrap">{error}</div>
+          <div className="text-xs text-slate-700 whitespace-pre-wrap">
+            {error}
+          </div>
         </div>
       </main>
     );
@@ -138,7 +142,9 @@ export default function AdminPage() {
         <header className="flex flex-col gap-1">
           <h1 className="text-2xl font-bold text-slate-900">管理ダッシュボード</h1>
           <p className="text-xs text-slate-500">
-            ログイン中: {me?.email ?? '-'} / アカウントID: {me?.account_id ?? '未設定'} / マスター権限
+            ログイン中: {me?.email ?? '-'} / アカウントID:{' '}
+            {me?.account_id ?? '未設定'} / マスター権限:{' '}
+            {me?.is_master ? 'ON' : 'OFF'}
           </p>
         </header>
 
@@ -149,7 +155,7 @@ export default function AdminPage() {
           </h2>
           <p className="text-xs text-slate-500 mb-4">
             メールアドレスごとに 5桁のアカウントIDを設定・変更できます。
-            ログイン時は「メール＋パスワード＋アカウントID」で認証を行います。
+            ログイン時は「メール＋パスワード＋アカウントID」で認証を行います（将来的な仕様）。
           </p>
 
           <div className="overflow-x-auto">
@@ -188,7 +194,6 @@ export default function AdminPage() {
                         maxLength={5}
                         className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
                         onChange={(e) => {
-                          // 数字以外は自動で削除
                           const onlyDigits = e.target.value.replace(/\D/g, '');
                           e.target.value = onlyDigits;
                         }}
@@ -206,8 +211,8 @@ export default function AdminPage() {
                       )}
                     </td>
                     <td className="px-3 py-1 align-middle text-slate-500">
-                      {p.created_at
-                        ? new Date(p.created_at).toLocaleDateString('ja-JP')
+                      {p.registered_at
+                        ? new Date(p.registered_at).toLocaleDateString('ja-JP')
                         : '-'}
                     </td>
                     <td className="px-3 py-1 align-middle">
