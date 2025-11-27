@@ -8,7 +8,7 @@ type Profile = {
   email: string | null;
   account_id: string | null;
   is_master: boolean | null;
-  registered_at: string | null;   // ✅ created_at → registered_at に変更
+  registered_at: string | null;
 };
 
 export default function AdminPage() {
@@ -32,17 +32,24 @@ export default function AdminPage() {
         return;
       }
 
-      // 自分のプロフィールを取得
+      const email = authData.user.email;
+      if (!email) {
+        setError('メールアドレス情報が取得できませんでした。');
+        setLoading(false);
+        return;
+      }
+
+      // ⭐ ここを「id 検索」から「email 検索」に変更
       const { data: myProfile, error: myProfileError } = await supabase
         .from('profiles')
-        .select('id, email, account_id, is_master, registered_at') // ✅ ここを修正
-        .eq('id', authData.user.id)
-        .single();
+        .select('id, email, account_id, is_master, registered_at')
+        .eq('email', email)
+        .maybeSingle();
 
       if (myProfileError || !myProfile) {
-        console.error(myProfileError);
+        console.error('myProfileError', myProfileError);
         setError(
-          'プロフィール情報の取得に失敗しました。profiles テーブルと registered_at 列を確認してください。'
+          'プロフィール情報の取得に失敗しました。\nprofiles テーブルに、ログイン中のメールアドレスの行があるか確認してください。'
         );
         setLoading(false);
         return;
@@ -60,11 +67,11 @@ export default function AdminPage() {
       // 全ユーザー一覧を取得
       const { data: allProfiles, error: listError } = await supabase
         .from('profiles')
-        .select('id, email, account_id, is_master, registered_at') // ✅ ここも修正
+        .select('id, email, account_id, is_master, registered_at')
         .order('registered_at', { ascending: true });
 
       if (listError) {
-        console.error(listError);
+        console.error('listError', listError);
         setError('ユーザー一覧の取得に失敗しました。');
         setLoading(false);
         return;
