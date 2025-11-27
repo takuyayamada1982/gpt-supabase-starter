@@ -1,212 +1,183 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
 export default function LoginPage() {
+  const router = useRouter();
+
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
-  const [pass, setPass] = useState('');
-  const [showPass, setShowPass] = useState(false);
+  const [password, setPassword] = useState('');
+
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-  const [alreadyLoggedIn, setAlreadyLoggedIn] = useState(false);
-  const [checking, setChecking] = useState(true);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // 新規登録とログインの切り替えモード
-  const [isSignup, setIsSignup] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      setAlreadyLoggedIn(!!data.user);
-      setChecking(false);
-    })();
-  }, []);
-
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErr(null);
-    setOk(null);
-    if (!email.trim() || !pass) {
-      setErr('メールアドレスとパスワードを入力してください。');
-      return;
-    }
-    setLoading(true);
-
-    if (isSignup) {
-      // 新規登録
-      const { error } = await supabase.auth.signUp({
-        email: email.trim(),
-        password: pass,
-      });
-      setLoading(false);
-      if (error) setErr(error.message || '登録に失敗しました。');
-      else setOk('登録メールを送信しました。メールを確認してアカウントを有効化してください。');
-    } else {
-      // ログイン
-      const { error } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password: pass,
-      });
-      setLoading(false);
-      if (error) setErr(error.message || 'ログインに失敗しました。');
-      else {
-        setOk('ログインに成功しました。ページを移動します…');
-        window.location.href = '/u';
-      }
-    }
+  const resetMessages = () => {
+    setMessage(null);
+    setError(null);
   };
 
-  const goToU = () => (window.location.href = '/u');
-  const onLogout = async () => {
-    await supabase.auth.signOut();
-    setAlreadyLoggedIn(false);
-    setOk('ログアウトしました。');
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    resetMessages();
+    setLoading(true);
+
+    try {
+      if (!email || !password) {
+        setError('メールアドレスとパスワードを入力してください。');
+        return;
+      }
+
+      if (mode === 'login') {
+        // ログイン
+        const { error } = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        if (error) throw error;
+
+        setMessage('ログインに成功しました。ユーザーページへ移動します。');
+        router.push('/u');
+      } else {
+        // 新規登録
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
+
+        if (data?.user) {
+          setMessage('登録が完了しました。そのままログイン状態でユーザーページへ移動します。');
+          router.push('/u');
+        } else {
+          setMessage('登録メールを確認してください。');
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setError(err.message || 'エラーが発生しました。時間をおいて再度お試しください。');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
-    <main className="max-w-md mx-auto">
-      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm p-6 sm:p-8">
-        <h2 className="text-xl font-semibold mb-1">
-          {isSignup ? '新規登録' : 'ログイン'}
-        </h2>
-        <p className="text-sm text-gray-600 mb-4">
-          {isSignup
-            ? 'アカウントを作成するにはメールアドレスとパスワードを入力してください。'
-            : '登録済みのメールアドレスとパスワードでログインしてください。'}
-        </p>
-
-        {!checking && alreadyLoggedIn && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 text-amber-800 text-sm px-3 py-2">
-            すでにログイン済みです。
-            <div className="mt-2 flex gap-8">
-              <button onClick={goToU} className="underline">
-                ユーザーページへ
-              </button>
-              <button onClick={onLogout} className="underline">
-                ログアウト
-              </button>
-            </div>
+    <main className="flex flex-col items-center justify-center py-10">
+      {/* カード全体 */}
+      <div className="w-full max-w-md rounded-2xl bg-white/80 shadow-lg border border-gray-100 px-6 py-8 backdrop-blur">
+        {/* タイトル */}
+        <div className="mb-6 text-center">
+          <div className="inline-flex items-center justify-center rounded-full bg-gray-900 text-white px-3 py-1 text-xs font-semibold mb-3">
+            SNS自動投稿アシスタント
           </div>
-        )}
+          <h2 className="text-xl font-bold text-gray-900 mb-1">
+            {mode === 'login' ? 'ログイン' : '新規登録'}
+          </h2>
+          <p className="text-xs text-gray-500">
+            1つのアカウントで URL要約・画像説明・チャットをまとめて利用できます。
+          </p>
+        </div>
 
-        {err && (
-          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 text-red-700 text-sm px-3 py-2">
-            {err}
-          </div>
-        )}
-        {ok && (
-          <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-sm px-3 py-2">
-            {ok}
-          </div>
-        )}
+        {/* タブ切り替え */}
+        <div className="mb-5 grid grid-cols-2 rounded-full bg-gray-100 p-1 text-xs font-semibold">
+          <button
+            type="button"
+            onClick={() => {
+              setMode('login');
+              resetMessages();
+            }}
+            className={
+              'py-2 rounded-full transition ' +
+              (mode === 'login'
+                ? 'bg-white shadow text-gray-900'
+                : 'text-gray-500 hover:text-gray-900')
+            }
+          >
+            ログイン
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('signup');
+              resetMessages();
+            }}
+            className={
+              'py-2 rounded-full transition ' +
+              (mode === 'signup'
+                ? 'bg-white shadow text-gray-900'
+                : 'text-gray-500 hover:text-gray-900')
+            }
+          >
+            新規登録
+          </button>
+        </div>
 
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
+        {/* フォーム */}
+        <form className="space-y-4" onSubmit={handleSubmit}>
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-gray-600">
               メールアドレス
             </label>
             <input
               type="email"
-              inputMode="email"
-              autoComplete="email"
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none ring-0 focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
               placeholder="you@example.com"
-              className="w-full rounded-xl border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-sky-400"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
             />
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1">
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-gray-600">
               パスワード
             </label>
-            <div className="relative">
-              <input
-                type={showPass ? 'text' : 'password'}
-                autoComplete={isSignup ? 'new-password' : 'current-password'}
-                placeholder="8文字以上の英数記号"
-                className="w-full rounded-xl border border-gray-300 px-3 py-2 pr-12 focus:ring-2 focus:ring-sky-400"
-                value={pass}
-                onChange={(e) => setPass(e.target.value)}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPass((v) => !v)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-xs border border-gray-300 rounded-md px-2 py-1 bg-white"
-              >
-                {showPass ? '隠す' : '表示'}
-              </button>
-            </div>
+            <input
+              type="password"
+              className="w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm outline-none ring-0 focus:border-gray-400 focus:ring-1 focus:ring-gray-300"
+              placeholder="8文字以上を推奨"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+            />
           </div>
 
+          {/* メッセージ表示 */}
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+              {error}
+            </div>
+          )}
+          {message && !error && (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+              {message}
+            </div>
+          )}
+
+          {/* ボタン */}
           <button
             type="submit"
             disabled={loading}
-            className={`w-full rounded-xl px-4 py-2 font-semibold text-white ${
-              loading ? 'bg-gray-400' : 'bg-gray-900 hover:bg-gray-800'
-            }`}
+            className="mt-2 inline-flex w-full items-center justify-center rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-gray-800 disabled:opacity-60"
           >
             {loading
-              ? '送信中…'
-              : isSignup
-              ? '登録メールを送信'
-              : 'ログイン'}
+              ? '処理中…'
+              : mode === 'login'
+              ? 'ログインする'
+              : 'この内容で登録する'}
           </button>
         </form>
 
-        <div className="mt-6 text-center text-sm">
-          {isSignup ? (
-            <p>
-              すでにアカウントをお持ちですか？{' '}
-              <button
-                onClick={() => setIsSignup(false)}
-                className="text-sky-700 hover:text-sky-900 underline"
-              >
-                ログインへ戻る
-              </button>
-            </p>
-          ) : (
-            <p>
-              初めての方は{' '}
-              <button
-                onClick={() => setIsSignup(true)}
-                className="text-sky-700 hover:text-sky-900 underline"
-              >
-                新規登録
-              </button>
-            </p>
-          )}
+        {/* 補足テキスト */}
+        <div className="mt-5 border-t border-dashed border-gray-200 pt-4">
+          <p className="text-[11px] leading-relaxed text-gray-500">
+            ・メールアドレスとパスワードは、このアプリ専用に設定することをおすすめします。<br />
+            ・ログイン後は上部メニューの「/u」から、SNS用テキスト自動生成ページに移動できます。
+          </p>
         </div>
-
-        {!isSignup && (
-          <div className="mt-4 text-sm">
-            <button
-              onClick={async () => {
-                if (!email.trim())
-                  return setErr('再設定にはメールアドレスが必要です。');
-                const { error } = await supabase.auth.resetPasswordForEmail(
-                  email.trim(),
-                  {
-                    redirectTo:
-                      process.env.NEXT_PUBLIC_SITE_URL
-                        ? `${process.env.NEXT_PUBLIC_SITE_URL}/login`
-                        : undefined,
-                  }
-                );
-                if (error) setErr(error.message);
-                else
-                  setOk(
-                    'パスワード再設定メールを送信しました。受信ボックスをご確認ください。'
-                  );
-              }}
-              className="text-sky-700 hover:text-sky-900"
-            >
-              パスワードをお忘れの方
-            </button>
-          </div>
-        )}
       </div>
     </main>
   );
