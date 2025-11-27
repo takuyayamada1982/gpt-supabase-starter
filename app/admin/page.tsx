@@ -1,636 +1,249 @@
-// app/admin/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-// profiles テーブルの型（最低限）
 type Profile = {
   id: string;
   email: string | null;
+  account_id: string | null;
   is_master: boolean | null;
-  registered_at: string | null;
-  deleted_at: string | null;
+  created_at: string | null;
 };
-
-// usage_logs テーブルの型（最低限）
-type UsageLog = {
-  user_id: string;
-  type: 'url' | 'vision' | 'chat' | string;
-  created_at: string;
-};
-
-type MonthOption = {
-  label: string; // 例: "2025年11月"
-  value: string; // 例: "2025-11"
-  start: string; // "YYYY-MM-01T00:00:00Z" 相当
-  end: string;   // 翌月1日
-};
-
-// ★ 金額設定（必要に応じて調整してください）
-const PRICE_URL = 0.7;     // URL要約 1回あたり 0.7円（仮）
-const PRICE_VISION = 1; // 画像API 1回あたり 1円（仮）
-const PRICE_CHAT = 0.5;    // チャット 1回あたり 0.5円（仮）
-
-// ★ 過去24ヶ月分の「月」選択肢を作る
-function buildMonthOptions(): MonthOption[] {
-  const now = new Date();
-  const options: MonthOption[] = [];
-
-  // 現在の月を 0 番目として 24 ヶ月分
-  for (let i = 0; i < 24; i++) {
-    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    const year = d.getFullYear();
-    const month = d.getMonth(); // 0-11
-    const label = `${year}年${month + 1}月`;
-    const value = `${year}-${String(month + 1).padStart(2, '0')}`;
-
-    const startDate = new Date(year, month, 1);
-    const endDate = new Date(year, month + 1, 1);
-
-    options.push({
-      label,
-      value,
-      start: startDate.toISOString(),
-      end: endDate.toISOString(),
-    });
-  }
-  return options;
-}
 
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
-  const [authStatus, setAuthStatus] = useState<'checking' | 'no-login' | 'no-master' | 'ok'>('checking');
-
+  const [me, setMe] = useState<Profile | null>(null);
   const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [usageLogs, setUsageLogs] = useState<UsageLog[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [savingIdFor, setSavingIdFor] = useState<string | null>(null);
 
-  const monthOptions = useMemo(() => buildMonthOptions(), []);
-  const [selectedMonth, setSelectedMonth] = useState<string>(monthOptions[0]?.value || '');
-
-  // =========================================
-  // 1. 認証 & マスター権限チェック
-  // =========================================
+  // ① ログインユーザーがマスターか確認 → ② ユーザー一覧取得
   useEffect(() => {
-    const checkAuth = async () => {
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
-      if (!user) {
-        setAuthStatus('no-login');
+    (async () => {
+      setLoading(true);
+      setError(null);
+
+      // 認証ユーザー取得
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        setError('ログインが必要です。/login からログインしてください。');
         setLoading(false);
         return;
       }
 
-      const { data: myProfile, error } = await supabase
+      // 自分のプロフィールを取得
+      const { data: myProfile, error: myProfileError } = await supabase
         .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle();
+        .select('id, email, account_id, is_master, created_at')
+        .eq('id', authData.user.id)
+        .single();
 
-      if (error || !myProfile) {
-        console.error('profiles 取得エラー', error);
-        setAuthStatus('no-master');
+      if (myProfileError || !myProfile) {
+        console.error(myProfileError);
+        setError('プロフィール情報の取得に失敗しました。profiles テーブルを確認してください。');
         setLoading(false);
         return;
       }
 
+      // マスター権限チェック
       if (!myProfile.is_master) {
-        setAuthStatus('no-master');
+        setError('このページを閲覧する権限がありません。（is_master = true のユーザーのみアクセス可能）');
         setLoading(false);
         return;
       }
 
-      // マスター権限OK
-      setAuthStatus('ok');
-      setLoading(false);
-    };
+      setMe(myProfile);
 
-    checkAuth();
+      // 全ユーザー一覧を取得
+      const { data: allProfiles, error: listError } = await supabase
+        .from('profiles')
+        .select('id, email, account_id, is_master, created_at')
+        .order('created_at', { ascending: true });
+
+      if (listError) {
+        console.error(listError);
+        setError('ユーザー一覧の取得に失敗しました。');
+        setLoading(false);
+        return;
+      }
+
+      setProfiles(allProfiles || []);
+      setLoading(false);
+    })();
   }, []);
 
-  // =========================================
-  // 2. 選択中の月のデータ取得
-  // =========================================
-  useEffect(() => {
-    const fetchData = async () => {
-      if (authStatus !== 'ok' || !selectedMonth) return;
+  // アカウントID更新
+  const handleUpdateAccountId = async (p: Profile, newId: string) => {
+    const trimmed = newId.trim();
 
-      const month = monthOptions.find((m) => m.value === selectedMonth);
-      if (!month) return;
+    if (!trimmed) {
+      alert('アカウントIDを入力してください。');
+      return;
+    }
+    if (!/^\d{5}$/.test(trimmed)) {
+      alert('アカウントIDは5桁の数字にしてください。');
+      return;
+    }
 
-      // profiles 全件
-      const { data: profilesData, error: pError } = await supabase
+    setSavingIdFor(p.id);
+    try {
+      const { error: updateError } = await supabase
         .from('profiles')
-        .select('*')
-        .order('registered_at', { ascending: true });
+        .update({ account_id: trimmed })
+        .eq('id', p.id);
 
-      if (pError) {
-        console.error('profiles 取得エラー', pError);
-        return;
-      }
+      if (updateError) throw updateError;
 
-      setProfiles(profilesData || []);
-
-      // usage_logs を該当月のみ
-      const { data: logsData, error: lError } = await supabase
-        .from('usage_logs')
-        .select('user_id, type, created_at')
-        .gte('created_at', month.start)
-        .lt('created_at', month.end);
-
-      if (lError) {
-        console.error('usage_logs 取得エラー', lError);
-        return;
-      }
-
-      setUsageLogs(logsData || []);
-    };
-
-    fetchData();
-  }, [authStatus, selectedMonth, monthOptions]);
-
-  // =========================================
-  // 3. 集計処理
-  // =========================================
-
-  // ユーザー単位の集計
-  const userStats = useMemo(() => {
-    // user_id → { urlCount, visionCount, chatCount }
-    const map = new Map<
-      string,
-      { urlCount: number; visionCount: number; chatCount: number }
-    >();
-
-    for (const log of usageLogs) {
-      if (!map.has(log.user_id)) {
-        map.set(log.user_id, { urlCount: 0, visionCount: 0, chatCount: 0 });
-      }
-      const entry = map.get(log.user_id)!;
-      if (log.type === 'url') entry.urlCount++;
-      else if (log.type === 'vision') entry.visionCount++;
-      else if (log.type === 'chat') entry.chatCount++;
+      // ローカル状態も更新
+      setProfiles((prev) =>
+        prev.map((row) =>
+          row.id === p.id ? { ...row, account_id: trimmed } : row
+        )
+      );
+      alert('アカウントIDを更新しました。');
+    } catch (e: any) {
+      console.error(e);
+      alert(`更新に失敗しました: ${e.message}`);
+    } finally {
+      setSavingIdFor(null);
     }
+  };
 
-    return map;
-  }, [usageLogs]);
+  // ===== 画面レンダリング =====
 
-  // 全体集計（回数 & 金額）
-  const totalStats = useMemo(() => {
-    let totalUrl = 0;
-    let totalVision = 0;
-    let totalChat = 0;
-
-    for (const log of usageLogs) {
-      if (log.type === 'url') totalUrl++;
-      else if (log.type === 'vision') totalVision++;
-      else if (log.type === 'chat') totalChat++;
-    }
-
-    const totalUrlCost = totalUrl * PRICE_URL;
-    const totalVisionCost = totalVision * PRICE_VISION;
-    const totalChatCost = totalChat * PRICE_CHAT;
-    const totalCost = totalUrlCost + totalVisionCost + totalChatCost;
-
-    return {
-      totalUrl,
-      totalVision,
-      totalChat,
-      totalUrlCost,
-      totalVisionCost,
-      totalChatCost,
-      totalCost,
-    };
-  }, [usageLogs]);
-
-  // グラフ用の最大値
-  const maxCount = Math.max(
-    1,
-    totalStats.totalUrl,
-    totalStats.totalVision,
-    totalStats.totalChat
-  );
-  const maxCost = Math.max(
-    1,
-    totalStats.totalUrlCost,
-    totalStats.totalVisionCost,
-    totalStats.totalChatCost
-  );
-
-  // =========================================
-  // 4. UI
-  // =========================================
-
-  if (loading || authStatus === 'checking') {
+  if (loading) {
     return (
-      <main style={{ maxWidth: 1080, margin: '0 auto', padding: 16 }}>
-        <p>読み込み中です…</p>
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-sm text-slate-600">読み込み中です…</div>
       </main>
     );
   }
 
-  if (authStatus === 'no-login') {
+  if (error) {
     return (
-      <main style={{ maxWidth: 1080, margin: '0 auto', padding: 16 }}>
-        <h2>管理画面</h2>
-        <p>ログインしていません。まずは /login からログインしてください。</p>
+      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
+        <div className="max-w-md rounded-2xl bg-white border border-red-100 p-4 shadow">
+          <div className="text-sm font-semibold text-red-600 mb-2">エラー</div>
+          <div className="text-xs text-slate-700 whitespace-pre-wrap">{error}</div>
+        </div>
       </main>
     );
   }
-
-  if (authStatus === 'no-master') {
-    return (
-      <main style={{ maxWidth: 1080, margin: '0 auto', padding: 16 }}>
-        <h2>管理画面</h2>
-        <p>このアカウントには管理者権限がありません。</p>
-      </main>
-    );
-  }
-
-  const monthLabel =
-    monthOptions.find((m) => m.value === selectedMonth)?.label || '';
 
   return (
-    <main
-      style={{
-        maxWidth: 1200,
-        margin: '0 auto',
-        padding: 16,
-        background: '#F3F4F6',
-        minHeight: '100vh',
-        boxSizing: 'border-box',
-      }}
-    >
-      <h1
-        style={{
-          fontSize: 24,
-          fontWeight: 800,
-          marginBottom: 12,
-        }}
-      >
-        管理者ダッシュボード
-      </h1>
+    <main className="min-h-screen bg-slate-50 px-4 py-6">
+      <div className="max-w-5xl mx-auto space-y-6">
+        {/* ヘッダー */}
+        <header className="flex flex-col gap-1">
+          <h1 className="text-2xl font-bold text-slate-900">管理ダッシュボード</h1>
+          <p className="text-xs text-slate-500">
+            ログイン中: {me?.email ?? '-'} / アカウントID: {me?.account_id ?? '未設定'} / マスター権限
+          </p>
+        </header>
 
-      {/* 月選択 & 概要 */}
-      <section
-        style={{
-          background: '#FFFFFF',
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 16,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-          <div>
-            <div style={{ fontSize: 12, color: '#6B7280' }}>対象期間</div>
-            <select
-              value={selectedMonth}
-              onChange={(e) => setSelectedMonth(e.target.value)}
-              style={{
-                marginTop: 4,
-                padding: '6px 10px',
-                borderRadius: 8,
-                border: '1px solid #D1D5DB',
-              }}
-            >
-              {monthOptions.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: '#6B7280' }}>登録アカウント数</div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>
-              {profiles.length} 件
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: 12, color: '#6B7280' }}>今月の合計金額（概算）</div>
-            <div style={{ fontSize: 18, fontWeight: 700 }}>
-              ¥{totalStats.totalCost.toLocaleString()}
-            </div>
-          </div>
-        </div>
-      </section>
+        {/* ユーザー一覧 ＋ アカウントID編集 */}
+        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 md:p-6">
+          <h2 className="text-lg font-semibold text-slate-900 mb-2">
+            ユーザー一覧 ＆ アカウントID編集
+          </h2>
+          <p className="text-xs text-slate-500 mb-4">
+            メールアドレスごとに 5桁のアカウントIDを設定・変更できます。
+            ログイン時は「メール＋パスワード＋アカウントID」で認証を行います。
+          </p>
 
-      {/* 全体グラフ（回数） */}
-      <section
-        style={{
-          background: '#FFFFFF',
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 16,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-        }}
-      >
-        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
-          全体利用回数（{monthLabel}）
-        </h2>
-        <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>
-          SNS要約（URL）・画像API・チャットの利用回数の合計です。
-        </p>
-
-        <div style={{ display: 'grid', gap: 8 }}>
-          {[
-            {
-              label: 'URL要約',
-              count: totalStats.totalUrl,
-              color: '#3B82F6',
-            },
-            {
-              label: '画像API',
-              count: totalStats.totalVision,
-              color: '#10B981',
-            },
-            {
-              label: 'チャット',
-              count: totalStats.totalChat,
-              color: '#F59E0B',
-            },
-          ].map((row) => (
-            <div key={row.label}>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 12,
-                  marginBottom: 4,
-                }}
-              >
-                <span>{row.label}</span>
-                <span>{row.count} 回</span>
-              </div>
-              <div
-                style={{
-                  height: 10,
-                  borderRadius: 999,
-                  background: '#E5E7EB',
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    width: `${(row.count / maxCount) * 100}%`,
-                    height: '100%',
-                    background: row.color,
-                    transition: 'width 0.3s',
-                  }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* 全体グラフ（金額） */}
-      <section
-        style={{
-          background: '#FFFFFF',
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 16,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-        }}
-      >
-        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
-          全体利用金額（概算・{monthLabel}）
-        </h2>
-        <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>
-          単価設定（URL: ¥{PRICE_URL} / 回、画像: ¥{PRICE_VISION} / 回、チャット: ¥{PRICE_CHAT} / 回）に基づく概算です。
-        </p>
-
-        <div style={{ display: 'grid', gap: 8 }}>
-          {[
-            {
-              label: 'URL要約',
-              cost: totalStats.totalUrlCost,
-              color: '#3B82F6',
-            },
-            {
-              label: '画像API',
-              cost: totalStats.totalVisionCost,
-              color: '#10B981',
-            },
-            {
-              label: 'チャット',
-              cost: totalStats.totalChatCost,
-              color: '#F59E0B',
-            },
-          ].map((row) => (
-            <div key={row.label}>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  fontSize: 12,
-                  marginBottom: 4,
-                }}
-              >
-                <span>{row.label}</span>
-                <span>¥{row.cost.toLocaleString()}</span>
-              </div>
-              <div
-                style={{
-                  height: 10,
-                  borderRadius: 999,
-                  background: '#E5E7EB',
-                  overflow: 'hidden',
-                }}
-              >
-                <div
-                  style={{
-                    width: `${(row.cost / maxCost) * 100}%`,
-                    height: '100%',
-                    background: row.color,
-                    transition: 'width 0.3s',
-                  }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* アカウント一覧 */}
-      <section
-        style={{
-          background: '#FFFFFF',
-          borderRadius: 12,
-          padding: 16,
-          marginBottom: 32,
-          boxShadow: '0 4px 12px rgba(0,0,0,0.05)',
-        }}
-      >
-        <h2 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8 }}>
-          アカウント別利用状況（{monthLabel}）
-        </h2>
-        <p style={{ fontSize: 12, color: '#6B7280', marginBottom: 12 }}>
-          各登録メールアドレスごとの利用回数・金額・権限・登録/解除日時を表示します。
-        </p>
-
-        <div style={{ overflowX: 'auto' }}>
-          <table
-            style={{
-              width: '100%',
-              borderCollapse: 'collapse',
-              fontSize: 12,
-            }}
-          >
-            <thead>
-              <tr style={{ background: '#F9FAFB' }}>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB', textAlign: 'left' }}>
-                  アカウントID（5桁）
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB', textAlign: 'left' }}>
-                  メールアドレス
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  マスター権限
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  URL要約
-                  <br />
-                  （回 / ¥）
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  画像API
-                  <br />
-                  （回 / ¥）
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  チャット
-                  <br />
-                  （回 / ¥）
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  合計金額
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  登録日時
-                </th>
-                <th style={{ padding: 8, borderBottom: '1px solid #E5E7EB' }}>
-                  解除日時
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {profiles.map((p, index) => {
-                const stat = userStats.get(p.id) || {
-                  urlCount: 0,
-                  visionCount: 0,
-                  chatCount: 0,
-                };
-
-                const urlCost = stat.urlCount * PRICE_URL;
-                const visionCost = stat.visionCount * PRICE_VISION;
-                const chatCost = stat.chatCount * PRICE_CHAT;
-                const sumCost = urlCost + visionCost + chatCost;
-
-                // 5桁ID（表示用）
-                const accountId = String(index + 1).padStart(5, '0');
-
-                const formatDate = (value: string | null) =>
-                  value ? new Date(value).toLocaleString() : '-';
-
-                return (
-                  <tr key={p.id}>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {accountId}
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-xs md:text-sm border-separate border-spacing-y-1">
+              <thead>
+                <tr className="text-left text-slate-500">
+                  <th className="px-3 py-1">#</th>
+                  <th className="px-3 py-1">メールアドレス</th>
+                  <th className="px-3 py-1">アカウントID（5桁）</th>
+                  <th className="px-3 py-1">マスター</th>
+                  <th className="px-3 py-1">登録日</th>
+                  <th className="px-3 py-1"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {profiles.map((p, idx) => (
+                  <tr
+                    key={p.id}
+                    className="bg-slate-50/80 hover:bg-slate-100 transition-colors"
+                  >
+                    <td className="px-3 py-1 align-middle text-slate-500">
+                      {idx + 1}
                     </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {p.email || '-'}
+                    <td className="px-3 py-1 align-middle">
+                      <div
+                        className="max-w-[200px] md:max-w-xs truncate"
+                        title={p.email ?? ''}
+                      >
+                        {p.email ?? '(no email)'}
+                      </div>
                     </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        textAlign: 'center',
-                      }}
-                    >
-                      {p.is_master ? '✅' : ''}
+                    <td className="px-3 py-1 align-middle">
+                      <input
+                        id={`account-${p.id}`}
+                        defaultValue={p.account_id ?? ''}
+                        maxLength={5}
+                        className="w-24 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
+                        onChange={(e) => {
+                          // 数字以外は自動で削除
+                          const onlyDigits = e.target.value.replace(/\D/g, '');
+                          e.target.value = onlyDigits;
+                        }}
+                      />
                     </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        textAlign: 'right',
-                      }}
-                    >
-                      {stat.urlCount} 回
-                      <br />
-                      ¥{urlCost.toLocaleString()}
+                    <td className="px-3 py-1 align-middle">
+                      {p.is_master ? (
+                        <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                          MASTER
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
+                          user
+                        </span>
+                      )}
                     </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        textAlign: 'right',
-                      }}
-                    >
-                      {stat.visionCount} 回
-                      <br />
-                      ¥{visionCost.toLocaleString()}
+                    <td className="px-3 py-1 align-middle text-slate-500">
+                      {p.created_at
+                        ? new Date(p.created_at).toLocaleDateString('ja-JP')
+                        : '-'}
                     </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        textAlign: 'right',
-                      }}
-                    >
-                      {stat.chatCount} 回
-                      <br />
-                      ¥{chatCost.toLocaleString()}
-                    </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        textAlign: 'right',
-                        fontWeight: 700,
-                      }}
-                    >
-                      ¥{sumCost.toLocaleString()}
-                    </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {formatDate(p.registered_at)}
-                    </td>
-                    <td
-                      style={{
-                        padding: 8,
-                        borderBottom: '1px solid #E5E7EB',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {formatDate(p.deleted_at)}
+                    <td className="px-3 py-1 align-middle">
+                      <button
+                        type="button"
+                        className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                        disabled={savingIdFor === p.id}
+                        onClick={() => {
+                          const input = document.getElementById(
+                            `account-${p.id}`
+                          ) as HTMLInputElement | null;
+                          if (!input) return;
+                          handleUpdateAccountId(p, input.value);
+                        }}
+                      >
+                        {savingIdFor === p.id ? '保存中…' : 'IDを保存'}
+                      </button>
                     </td>
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </section>
+                ))}
+
+                {profiles.length === 0 && (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-3 py-4 text-center text-xs text-slate-500"
+                    >
+                      まだ登録ユーザーがいません。
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </main>
   );
 }
