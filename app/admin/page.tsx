@@ -28,9 +28,9 @@ type MonthOption = {
 };
 
 // ★ 金額設定（必要に応じて調整してください）
-const PRICE_URL = 5;     // URL要約 1回あたり 5円（仮）
-const PRICE_VISION = 15; // 画像API 1回あたり 15円（仮）
-const PRICE_CHAT = 2;    // チャット 1回あたり 2円（仮）
+const PRICE_URL = 0.7;     // URL要約 1回あたり 0.7円（仮）
+const PRICE_VISION = 1; // 画像API 1回あたり 1円（仮）
+const PRICE_CHAT = 0.5;    // チャット 1回あたり 0.5円（仮）
 
 // ★ 過去24ヶ月分の「月」選択肢を作る
 function buildMonthOptions(): MonthOption[] {
