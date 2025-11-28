@@ -1,638 +1,378 @@
 // app/admin/page.tsx
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '@/lib/supabaseClient';
+import { useEffect, useState } from 'react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LineChart,
+  Line,
+  Legend,
+} from 'recharts';
 
-type Profile = {
-  id: string;
-  email: string | null;
-  account_id: string | null;
-  is_master: boolean | null;
-  registered_at: string | null;
-};
+type UsageType = 'url' | 'vision' | 'chat';
 
-type UsageLog = {
-  user_id: string;
-  type: 'url' | 'vision' | 'chat';
-  created_at: string;
-};
-
-// ===== トークン前提（ユーザー指定の値） =====
-const TOKENS = {
-  url: { input: 4000, output: 2000 },   // 3000〜5000 の中間として 4000 に
-  vision: { input: 200, output: 1200 },
-  chat: { input: 1000, output: 2000 },
-} as const;
-
-// gpt-4.1-mini の目安
-const PRICE = {
-  per1kInput: 0.00015,
-  per1kOutput: 0.0006,
-};
-
-// 1 回あたりの概算コスト（USD）
-function costPerCall(type: 'url' | 'vision' | 'chat'): number {
-  const t = TOKENS[type];
-  const inputCost = (t.input / 1000) * PRICE.per1kInput;
-  const outputCost = (t.output / 1000) * PRICE.per1kOutput;
-  return inputCost + outputCost;
+interface AdminSummary {
+  totalRequests: number;
+  totalUsers: number;
+  monthRequests: number;
+  monthCost: number;
+  monthCountsByType: {
+    url: number;
+    vision: number;
+    chat: number;
+  };
 }
 
-// 月別集計用の型
-type MonthlyPoint = {
-  label: string;   // "2025-11" みたいな表示用
-  total: number;   // URL+画像+Chat の総回数
-};
+interface MonthlyUsage {
+  month: string; // '2025-01'
+  urlCount: number;
+  visionCount: number;
+  chatCount: number;
+  totalCost: number;
+}
+
+interface TopUserUsage {
+  userId: string;
+  accountId: string;
+  email: string;
+  urlCount: number;
+  visionCount: number;
+  chatCount: number;
+  totalCost: number;
+}
+
+interface RecentLog {
+  id: string;
+  createdAt: string;
+  type: UsageType;
+  userEmail: string;
+  accountId: string;
+}
+
+interface AdminStatsResponse {
+  summary: AdminSummary;
+  monthlyUsage: MonthlyUsage[];
+  topUsers: TopUserUsage[];
+  recentLogs: RecentLog[];
+}
 
 export default function AdminPage() {
+  const [stats, setStats] = useState<AdminStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [me, setMe] = useState<Profile | null>(null);
-  const [profiles, setProfiles] = useState<Profile[]>([]);
-  const [usage, setUsage] = useState<UsageLog[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [savingIdFor, setSavingIdFor] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
 
-  // ① ログインユーザーがマスターか確認 → ② ユーザー一覧＋使用ログ取得
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      setError(null);
-
-      // --- 認証ユーザー取得 ---
-      const { data: authData, error: authError } =
-        await supabase.auth.getUser();
-      if (authError || !authData.user) {
-        setError('ログインが必要です。/login からログインしてください。');
+    const fetchStats = async () => {
+      try {
+        const params = selectedMonth ? `?month=${selectedMonth}` : '';
+        const res = await fetch(`/api/admin/stats${params}`);
+        const data: AdminStatsResponse = await res.json();
+        setStats(data);
+      } catch (err) {
+        console.error('Failed to fetch admin stats', err);
+      } finally {
         setLoading(false);
-        return;
       }
+    };
+    fetchStats();
+  }, [selectedMonth]);
 
-      // --- 自分のプロフィールを取得（id → email の順で保険をかけて探す） ---
-      let myProfile: Profile | null = null;
-
-      // 1) id で検索
-      const { data: byId, error: byIdErr } = await supabase
-        .from('profiles')
-        .select('id, email, account_id, is_master, registered_at')
-        .eq('id', authData.user.id)
-        .maybeSingle();
-
-      if (byId && !byIdErr) {
-        myProfile = byId as Profile;
-      } else {
-        // 2) email で検索
-        const email = authData.user.email;
-        if (email) {
-          const { data: byEmail, error: byEmailErr } = await supabase
-            .from('profiles')
-            .select('id, email, account_id, is_master, registered_at')
-            .eq('email', email)
-            .maybeSingle();
-
-          if (byEmail && !byEmailErr) {
-            myProfile = byEmail as Profile;
-          }
-        }
-      }
-
-      if (!myProfile) {
-        setError(
-          'プロフィール情報の取得に失敗しました。\n' +
-            'profiles テーブルに、ログイン中ユーザーの行（id か email）があるか確認してください。'
-        );
-        setLoading(false);
-        return;
-      }
-
-      // --- マスター権限チェック ---
-      if (!myProfile.is_master) {
-        setError(
-          'このページを閲覧する権限がありません。（is_master = true のユーザーのみアクセス可能）'
-        );
-        setLoading(false);
-        return;
-      }
-
-      setMe(myProfile);
-
-      // --- 全ユーザー一覧 ---
-      const { data: allProfiles, error: listError } = await supabase
-        .from('profiles')
-        .select('id, email, account_id, is_master, registered_at')
-        .order('registered_at', { ascending: true });
-
-      if (listError) {
-        console.error(listError);
-        setError('ユーザー一覧の取得に失敗しました。');
-        setLoading(false);
-        return;
-      }
-      setProfiles((allProfiles ?? []) as Profile[]);
-
-      // --- usage_logs（24ヶ月分） ---
-      const since = new Date();
-      since.setMonth(since.getMonth() - 24);
-
-      const { data: logs, error: usageErr } = await supabase
-        .from('usage_logs')
-        .select('user_id, type, created_at')
-        .gte('created_at', since.toISOString());
-
-      if (usageErr) {
-        console.error(usageErr);
-        setError(
-          '使用ログの取得に失敗しました。usage_logs テーブルを確認してください。'
-        );
-        setLoading(false);
-        return;
-      }
-
-      setUsage((logs ?? []) as UsageLog[]);
-      setLoading(false);
-    })();
-  }, []);
-
-  // --- ユーザー別集計 ---
-  const perUser = useMemo(() => {
-    const map: Record<
-      string,
-      {
-        profile: Profile | null;
-        url: number;
-        vision: number;
-        chat: number;
-        cost: number;
-      }
-    > = {};
-
-    for (const p of profiles) {
-      map[p.id] = {
-        profile: p,
-        url: 0,
-        vision: 0,
-        chat: 0,
-        cost: 0,
-      };
-    }
-
-    for (const row of usage) {
-      if (!map[row.user_id]) {
-        map[row.user_id] = {
-          profile: null,
-          url: 0,
-          vision: 0,
-          chat: 0,
-          cost: 0,
-        };
-      }
-      const entry = map[row.user_id];
-      if (row.type === 'url') {
-        entry.url += 1;
-        entry.cost += costPerCall('url');
-      } else if (row.type === 'vision') {
-        entry.vision += 1;
-        entry.cost += costPerCall('vision');
-      } else if (row.type === 'chat') {
-        entry.chat += 1;
-        entry.cost += costPerCall('chat');
-      }
-    }
-
-    return Object.values(map);
-  }, [profiles, usage]);
-
-  // --- 全体集計 ---
-  const total = useMemo(() => {
-    let url = 0,
-      vision = 0,
-      chat = 0,
-      cost = 0;
-    for (const u of perUser) {
-      url += u.url;
-      vision += u.vision;
-      chat += u.chat;
-      cost += u.cost;
-    }
-    const calls = url + vision + chat;
-    return { url, vision, chat, cost, calls };
-  }, [perUser]);
-
-  // --- 月別のグラフ用データ（直近 12 ヶ月） ---
-  const monthlyData: MonthlyPoint[] = useMemo(() => {
-    const now = new Date();
-    const map = new Map<string, number>();
-
-    // 12ヶ月分のキーだけ先に作成（0件の月も表示したいので）
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-        2,
-        '0'
-      )}`;
-      map.set(key, 0);
-    }
-
-    for (const row of usage) {
-      const d = new Date(row.created_at);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-        2,
-        '0'
-      )}`;
-      if (map.has(key)) {
-        map.set(key, (map.get(key) || 0) + 1);
-      }
-    }
-
-    return Array.from(map.entries()).map(([label, total]) => ({
-      label,
-      total,
-    }));
-  }, [usage]);
-
-  // グラフ描画用の最大値
-  const monthlyMax = useMemo(() => {
-    return Math.max(
-      1,
-      ...monthlyData.map((m) => m.total) // 1 以上にしておく
-    );
-  }, [monthlyData]);
-
-  // アカウントID更新
-  const handleUpdateAccountId = async (p: Profile, newId: string) => {
-    const trimmed = newId.trim();
-
-    if (!trimmed) {
-      alert('アカウントIDを入力してください。');
-      return;
-    }
-    if (!/^\d{5}$/.test(trimmed)) {
-      alert('アカウントIDは5桁の数字にしてください。');
-      return;
-    }
-
-    setSavingIdFor(p.id);
-    try {
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({ account_id: trimmed })
-        .eq('id', p.id);
-
-      if (updateError) throw updateError;
-
-      setProfiles((prev) =>
-        prev.map((row) =>
-          row.id === p.id ? { ...row, account_id: trimmed } : row
-        )
-      );
-      alert('アカウントIDを更新しました。');
-    } catch (e: any) {
-      console.error(e);
-      alert(`更新に失敗しました: ${e.message}`);
-    } finally {
-      setSavingIdFor(null);
-    }
-  };
-
-  // ===== レンダリング =====
-
-  if (loading) {
+  if (loading || !stats) {
     return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <div className="text-sm text-slate-600">読み込み中です…</div>
-      </main>
+      <div className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center">
+        <div className="text-sm text-slate-300">Loading admin dashboard...</div>
+      </div>
     );
   }
 
-  if (error) {
-    return (
-      <main className="min-h-screen bg-slate-50 flex items-center justify-center px-4">
-        <div className="max-w-md rounded-2xl bg-white border border-red-100 p-4 shadow">
-          <div className="text-sm font-semibold text-red-600 mb-2">エラー</div>
-          <div className="text-xs text-slate-700 whitespace-pre-wrap">
-            {error}
-          </div>
-        </div>
-      </main>
-    );
-  }
+  const { summary, monthlyUsage, topUsers, recentLogs } = stats;
+
+  const usageByTypeData = [
+    { type: 'URL要約', key: 'url', count: summary.monthCountsByType.url },
+    { type: '画像→SNS', key: 'vision', count: summary.monthCountsByType.vision },
+    { type: 'Chat', key: 'chat', count: summary.monthCountsByType.chat },
+  ];
+
+  const pieData = usageByTypeData.map((d) => ({
+    name: d.type,
+    value: d.count,
+  }));
 
   return (
-    <main className="min-h-screen bg-slate-50 px-4 py-6">
-      <div className="max-w-6xl mx-auto space-y-6">
-        {/* ===== ヘッダー ===== */}
-        <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+    <div className="min-h-screen bg-slate-950 text-slate-50">
+      {/* ヘッダー */}
+      <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
+        <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-2xl font-bold text-slate-900">
-              ダッシュボード
-            </h1>
-            <p className="text-xs text-slate-500 mt-1">
-              ログイン中: {me?.email ?? '-'} / アカウントID:{' '}
-              {me?.account_id ?? '未設定'} / マスター権限:{' '}
-              {me?.is_master ? 'ON' : 'OFF'}
+            <h1 className="text-xl font-semibold">Admin Dashboard</h1>
+            <p className="text-xs text-slate-400">
+              利用状況と料金をリアルタイムにモニタリング
             </p>
           </div>
-          <div className="flex gap-2 text-[11px] text-slate-500">
-            <span className="inline-flex items-center gap-1">
-              <span className="h-3 w-3 rounded-full bg-teal-500" /> URL要約
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-3 w-3 rounded-full bg-sky-500" /> 画像
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <span className="h-3 w-3 rounded-full bg-emerald-500" /> Chat
-            </span>
+          <div className="flex items-center gap-2">
+            {/* 月選択（とりあえず簡易セレクト） */}
+            <select
+              className="rounded-md bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+              value={selectedMonth ?? ''}
+              onChange={(e) =>
+                setSelectedMonth(e.target.value || null)
+              }
+            >
+              <option value="">最新月</option>
+              {monthlyUsage.map((m) => (
+                <option key={m.month} value={m.month}>
+                  {m.month}
+                </option>
+              ))}
+            </select>
           </div>
-        </header>
+        </div>
+      </header>
 
-        {/* ===== 上段：サマリ＋ドーナツ＋グラフ ===== */}
-        <section className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-          {/* 左：ドーナツ＋ミニカード */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col md:flex-row items-center gap-4">
-            {/* ドーナツチャート風 */}
-            <div className="relative h-32 w-32 md:h-40 md:w-40">
-              <svg viewBox="0 0 120 120" className="h-full w-full">
-                {/* 外側リング */}
-                <circle
-                  cx="60"
-                  cy="60"
-                  r="50"
-                  fill="none"
-                  stroke="#e5f3f0"
-                  strokeWidth="12"
-                />
-                {/* 使用率リング（全回数 / 目標10,000としてざっくり） */}
-                {total.calls > 0 && (
-                  <circle
-                    cx="60"
-                    cy="60"
-                    r="50"
-                    fill="none"
-                    stroke="#14b8a6"
-                    strokeWidth="12"
-                    strokeLinecap="round"
-                    strokeDasharray={`${Math.min(
-                      (total.calls / 10000) * 314,
-                      314
-                    )} 314`}
-                    transform="rotate(-90 60 60)"
-                  />
-                )}
-              </svg>
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
-                <div className="text-xs text-slate-400">総リクエスト数</div>
-                <div className="text-xl md:text-2xl font-bold text-slate-900">
-                  {total.calls}
-                </div>
-                <div className="text-[11px] text-slate-400">
-                  概算原価 ${total.cost.toFixed(3)}
-                </div>
-              </div>
-            </div>
-
-            {/* 数値カード */}
-            <div className="flex-1 grid gap-2 w-full">
-              <div className="grid grid-cols-3 gap-2 text-[11px] md:text-xs">
-                <div className="rounded-xl bg-teal-50 px-3 py-2">
-                  <div className="text-slate-500 mb-1 flex items-center gap-1">
-                    <span className="inline-block h-2 w-2 rounded-full bg-teal-500" />
-                    URL要約
-                  </div>
-                  <div className="text-lg font-bold text-slate-900">
-                    {total.url}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-sky-50 px-3 py-2">
-                  <div className="text-slate-500 mb-1 flex items-center gap-1">
-                    <span className="inline-block h-2 w-2 rounded-full bg-sky-500" />
-                    画像
-                  </div>
-                  <div className="text-lg font-bold text-slate-900">
-                    {total.vision}
-                  </div>
-                </div>
-                <div className="rounded-xl bg-emerald-50 px-3 py-2">
-                  <div className="text-slate-500 mb-1 flex items-center gap-1">
-                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-                    Chat
-                  </div>
-                  <div className="text-lg font-bold text-slate-900">
-                    {total.chat}
-                  </div>
-                </div>
-              </div>
-
-              <p className="text-[11px] text-slate-400 mt-1">
-                ※ 24ヶ月分の usage_logs を集計しています。金額は
-                gpt-4.1-mini のトークン単価から算出した概算です。
-              </p>
-            </div>
-          </div>
-
-          {/* 右：月別グラフ（スマホでも見やすいバー） */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-slate-900">
-                月別リクエスト数（直近12ヶ月）
-              </h2>
-              <span className="text-[11px] text-slate-400">
-                合計 {total.calls} 回
-              </span>
-            </div>
-
-            <div className="relative w-full h-40 md:h-52">
-              <svg
-                viewBox="0 0 320 140"
-                className="w-full h-full text-teal-500"
-              >
-                {/* 横グリッド */}
-                {[0, 0.25, 0.5, 0.75, 1].map((t) => (
-                  <line
-                    key={t}
-                    x1={20}
-                    x2={310}
-                    y1={20 + 100 * t}
-                    y2={20 + 100 * t}
-                    stroke="#e5e7eb"
-                    strokeWidth={0.5}
-                  />
-                ))}
-
-                {/* 棒グラフ */}
-                {monthlyData.map((m, idx) => {
-                  const barWidth = 16;
-                  const gap = 24;
-                  const x = 30 + idx * gap;
-                  const height = (m.total / monthlyMax) * 100;
-                  const y = 120 - height;
-                  return (
-                    <g key={m.label}>
-                      <rect
-                        x={x}
-                        y={y}
-                        width={barWidth}
-                        height={height}
-                        rx={4}
-                        className="fill-teal-500/70"
-                      />
-                    </g>
-                  );
-                })}
-
-                {/* X軸ラベル（2ヶ月おきに表示） */}
-                {monthlyData.map((m, idx) => {
-                  if (idx % 2 !== 0) return null;
-                  const x = 30 + idx * 24 + 8;
-                  const [year, month] = m.label.split('-');
-                  return (
-                    <text
-                      key={m.label}
-                      x={x}
-                      y={135}
-                      textAnchor="middle"
-                      fontSize="8"
-                      fill="#6b7280"
-                    >
-                      {`${Number(month)}月`}
-                    </text>
-                  );
-                })}
-              </svg>
-            </div>
-          </div>
+      {/* コンテンツ */}
+      <main className="mx-auto max-w-6xl px-4 py-6 space-y-6">
+        {/* KPIカード */}
+        <section className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+          <KpiCard
+            title="今月の総リクエスト"
+            value={summary.monthRequests.toLocaleString()}
+            subtitle="url + vision + chat"
+          />
+          <KpiCard
+            title="今月のURL要約"
+            value={summary.monthCountsByType.url.toLocaleString()}
+            subtitle="type = url"
+          />
+          <KpiCard
+            title="今月の画像生成"
+            value={summary.monthCountsByType.vision.toLocaleString()}
+            subtitle="type = vision"
+          />
+          <KpiCard
+            title="今月のChat"
+            value={summary.monthCountsByType.chat.toLocaleString()}
+            subtitle="type = chat"
+          />
+          <KpiCard
+            title="今月の推定料金"
+            value={`¥${summary.monthCost.toLocaleString()}`}
+            subtitle="API原価ベース"
+          />
+          <KpiCard
+            title="累計ユーザー数"
+            value={summary.totalUsers.toLocaleString()}
+            subtitle="profiles.count"
+          />
         </section>
 
-        {/* ===== 下段：ユーザー別 使用状況 ＋ アカウントID編集 ===== */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 md:p-6">
-          <h2 className="text-lg font-semibold text-slate-900 mb-2">
-            ユーザー一覧 ＆ アカウントID編集
-          </h2>
-          <p className="text-xs text-slate-500 mb-4">
-            メールアドレスごとに 5桁のアカウントIDを設定・変更できます。
-            使用回数と概算料金は usage_logs をもとに自動集計されています。
-          </p>
+        {/* 利用内訳グラフ */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <Card title="今月の利用回数（機能別）">
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={usageByTypeData}>
+                  <XAxis dataKey="type" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="count" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
 
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-xs md:text-sm border-separate border-spacing-y-1">
-              <thead>
-                <tr className="text-left text-slate-500">
-                  <th className="px-3 py-1">#</th>
-                  <th className="px-3 py-1">メールアドレス</th>
-                  <th className="px-3 py-1">アカウントID</th>
-                  <th className="px-3 py-1 text-right">URL</th>
-                  <th className="px-3 py-1 text-right">画像</th>
-                  <th className="px-3 py-1 text-right">Chat</th>
-                  <th className="px-3 py-1 text-right">概算原価(USD)</th>
-                  <th className="px-3 py-1">マスター</th>
-                  <th className="px-3 py-1">登録日</th>
-                  <th className="px-3 py-1"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {perUser.map((u, idx) => {
-                  const p = u.profile;
-                  return (
+          <Card title="今月の利用比率（機能別）">
+            <div className="h-64 flex items-center justify-center">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={pieData}
+                    dataKey="value"
+                    nameKey="name"
+                    outerRadius={80}
+                    label
+                  >
+                    {pieData.map((_, index) => (
+                      <Cell key={index} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </section>
+
+        {/* 月次推移 */}
+        <section>
+          <Card title="月次推移（最大24ヶ月）">
+            <div className="h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={monthlyUsage}>
+                  <XAxis dataKey="month" />
+                  <YAxis />
+                  <Tooltip />
+                  <Legend />
+                  <Line
+                    type="monotone"
+                    dataKey="urlCount"
+                    name="URL要約"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="visionCount"
+                    name="画像→SNS"
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="chatCount"
+                    name="Chat"
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </section>
+
+        {/* 下段テーブル */}
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* ユーザーランキング */}
+          <Card title="ユーザー別利用ランキング（上位10）">
+            <div className="max-h-80 overflow-auto text-xs">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-900 sticky top-0">
+                  <tr>
+                    <th className="px-2 py-1">ユーザー</th>
+                    <th className="px-2 py-1 text-right">URL</th>
+                    <th className="px-2 py-1 text-right">画像</th>
+                    <th className="px-2 py-1 text-right">Chat</th>
+                    <th className="px-2 py-1 text-right">料金</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topUsers.map((u) => (
                     <tr
-                      key={p?.id ?? idx}
-                      className="bg-slate-50/80 hover:bg-slate-100 transition-colors"
+                      key={u.userId}
+                      className="border-t border-slate-800"
                     >
-                      <td className="px-3 py-1 align-middle text-slate-500">
-                        {idx + 1}
-                      </td>
-                      <td className="px-3 py-1 align-middle">
-                        <div
-                          className="max-w-[180px] md:max-w-xs truncate"
-                          title={p?.email ?? ''}
-                        >
-                          {p?.email ?? '(unknown user)'}
+                      <td className="px-2 py-1">
+                        <div className="font-medium">
+                          {u.accountId}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {u.email}
                         </div>
                       </td>
-                      <td className="px-3 py-1 align-middle">
-                        {p ? (
-                          <input
-                            id={`account-${p.id}`}
-                            defaultValue={p.account_id ?? ''}
-                            maxLength={5}
-                            className="w-20 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-slate-400"
-                            onChange={(e) => {
-                              const onlyDigits = e.target.value.replace(
-                                /\D/g,
-                                ''
-                              );
-                              e.target.value = onlyDigits;
-                            }}
-                          />
-                        ) : (
-                          '-'
-                        )}
+                      <td className="px-2 py-1 text-right">
+                        {u.urlCount}
                       </td>
-                      <td className="px-3 py-1 align-middle text-right">
-                        {u.url}
+                      <td className="px-2 py-1 text-right">
+                        {u.visionCount}
                       </td>
-                      <td className="px-3 py-1 align-middle text-right">
-                        {u.vision}
+                      <td className="px-2 py-1 text-right">
+                        {u.chatCount}
                       </td>
-                      <td className="px-3 py-1 align-middle text-right">
-                        {u.chat}
-                      </td>
-                      <td className="px-3 py-1 align-middle text-right">
-                        ${u.cost.toFixed(3)}
-                      </td>
-                      <td className="px-3 py-1 align-middle">
-                        {p?.is_master ? (
-                          <span className="inline-flex items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-                            MASTER
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500">
-                            user
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-1 align-middle text-slate-500">
-                        {p?.registered_at
-                          ? new Date(
-                              p.registered_at
-                            ).toLocaleDateString('ja-JP')
-                          : '-'}
-                      </td>
-                      <td className="px-3 py-1 align-middle">
-                        {p && (
-                          <button
-                            type="button"
-                            className="rounded-lg bg-slate-900 px-3 py-1 text-xs font-semibold text-white disabled:opacity-60"
-                            disabled={savingIdFor === p.id}
-                            onClick={() => {
-                              const input = document.getElementById(
-                                `account-${p.id}`
-                              ) as HTMLInputElement | null;
-                              if (!input) return;
-                              handleUpdateAccountId(p, input.value);
-                            }}
-                          >
-                            {savingIdFor === p.id ? '保存中…' : 'IDを保存'}
-                          </button>
-                        )}
+                      <td className="px-2 py-1 text-right">
+                        ¥{u.totalCost.toLocaleString()}
                       </td>
                     </tr>
-                  );
-                })}
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
 
-                {perUser.length === 0 && (
+          {/* 最近のログ */}
+          <Card title="最近の利用ログ">
+            <div className="max-h-80 overflow-auto text-xs">
+              <table className="w-full text-left border-collapse">
+                <thead className="bg-slate-900 sticky top-0">
                   <tr>
-                    <td
-                      colSpan={10}
-                      className="px-3 py-4 text-center text-xs text-slate-500"
-                    >
-                      まだ登録ユーザーがいません。
-                    </td>
+                    <th className="px-2 py-1">日時</th>
+                    <th className="px-2 py-1">ユーザー</th>
+                    <th className="px-2 py-1">type</th>
                   </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {recentLogs.map((log) => (
+                    <tr
+                      key={log.id}
+                      className="border-t border-slate-800"
+                    >
+                      <td className="px-2 py-1">
+                        {new Date(log.createdAt).toLocaleString()}
+                      </td>
+                      <td className="px-2 py-1">
+                        <div className="font-medium">
+                          {log.accountId}
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          {log.userEmail}
+                        </div>
+                      </td>
+                      <td className="px-2 py-1">
+                        <TypeBadge type={log.type} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
         </section>
+      </main>
+    </div>
+  );
+}
+
+// 小さめの再利用コンポーネント
+
+function KpiCard(props: {
+  title: string;
+  value: string;
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 flex flex-col gap-1">
+      <div className="text-[11px] uppercase tracking-wide text-slate-400">
+        {props.title}
       </div>
-    </main>
+      <div className="text-2xl font-semibold">{props.value}</div>
+      {props.subtitle && (
+        <div className="text-[11px] text-slate-500">
+          {props.subtitle}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Card(props: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
+      <h2 className="text-sm font-semibold">{props.title}</h2>
+      {props.children}
+    </section>
+  );
+}
+
+function TypeBadge({ type }: { type: UsageType }) {
+  const label =
+    type === 'url' ? 'URL' : type === 'vision' ? '画像' : 'Chat';
+  return (
+    <span className="inline-flex items-center rounded-full border border-slate-700 px-2 py-[2px] text-[10px]">
+      {label}
+    </span>
   );
 }
