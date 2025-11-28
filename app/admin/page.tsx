@@ -18,14 +18,14 @@ type UsageLog = {
   created_at: string;
 };
 
-// ★ トークン前提（ユーザー指定の値） ---------------------------------
+// ===== トークン前提（ユーザー指定の値） =====
 const TOKENS = {
-  url: { input: 4000, output: 2000 },      // 3000〜5000 の中間 4000 とした
-  vision: { input: 200, output: 1200 },    // 画像＋補助説明
+  url: { input: 4000, output: 2000 },   // 3000〜5000 の中間として 4000 に
+  vision: { input: 200, output: 1200 },
   chat: { input: 1000, output: 2000 },
 } as const;
 
-// ★ 料金（gpt-4.1-mini の目安：1K input=0.00015, 1K output=0.0006 ドル相当）
+// gpt-4.1-mini の目安
 const PRICE = {
   per1kInput: 0.00015,
   per1kOutput: 0.0006,
@@ -38,6 +38,12 @@ function costPerCall(type: 'url' | 'vision' | 'chat'): number {
   const outputCost = (t.output / 1000) * PRICE.per1kOutput;
   return inputCost + outputCost;
 }
+
+// 月別集計用の型
+type MonthlyPoint = {
+  label: string;   // "2025-11" みたいな表示用
+  total: number;   // URL+画像+Chat の総回数
+};
 
 export default function AdminPage() {
   const [loading, setLoading] = useState(true);
@@ -62,7 +68,7 @@ export default function AdminPage() {
         return;
       }
 
-      // --- 自分のプロフィールを取得（id→email の順で探す） ---
+      // --- 自分のプロフィールを取得（id → email の順で保険をかけて探す） ---
       let myProfile: Profile | null = null;
 
       // 1) id で検索
@@ -75,7 +81,7 @@ export default function AdminPage() {
       if (byId && !byIdErr) {
         myProfile = byId as Profile;
       } else {
-        // 2) email で検索（保険）
+        // 2) email で検索
         const email = authData.user.email;
         if (email) {
           const { data: byEmail, error: byEmailErr } = await supabase
@@ -92,7 +98,8 @@ export default function AdminPage() {
 
       if (!myProfile) {
         setError(
-          'プロフィール情報の取得に失敗しました。\nprofiles テーブルに、ログイン中ユーザーの行（id か email）があるか確認してください。'
+          'プロフィール情報の取得に失敗しました。\n' +
+            'profiles テーブルに、ログイン中ユーザーの行（id か email）があるか確認してください。'
         );
         setLoading(false);
         return;
@@ -123,7 +130,7 @@ export default function AdminPage() {
       }
       setProfiles((allProfiles ?? []) as Profile[]);
 
-      // --- 使用ログ 24 ヶ月分 ---
+      // --- usage_logs（24ヶ月分） ---
       const since = new Date();
       since.setMonth(since.getMonth() - 24);
 
@@ -134,7 +141,9 @@ export default function AdminPage() {
 
       if (usageErr) {
         console.error(usageErr);
-        setError('使用ログの取得に失敗しました。usage_logs テーブルを確認してください。');
+        setError(
+          '使用ログの取得に失敗しました。usage_logs テーブルを確認してください。'
+        );
         setLoading(false);
         return;
       }
@@ -144,7 +153,7 @@ export default function AdminPage() {
     })();
   }, []);
 
-  // --- 使用状況を集計（ユーザー別） ---
+  // --- ユーザー別集計 ---
   const perUser = useMemo(() => {
     const map: Record<
       string,
@@ -205,12 +214,54 @@ export default function AdminPage() {
       chat += u.chat;
       cost += u.cost;
     }
-    return { url, vision, chat, cost };
+    const calls = url + vision + chat;
+    return { url, vision, chat, cost, calls };
   }, [perUser]);
+
+  // --- 月別のグラフ用データ（直近 12 ヶ月） ---
+  const monthlyData: MonthlyPoint[] = useMemo(() => {
+    const now = new Date();
+    const map = new Map<string, number>();
+
+    // 12ヶ月分のキーだけ先に作成（0件の月も表示したいので）
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}`;
+      map.set(key, 0);
+    }
+
+    for (const row of usage) {
+      const d = new Date(row.created_at);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
+        2,
+        '0'
+      )}`;
+      if (map.has(key)) {
+        map.set(key, (map.get(key) || 0) + 1);
+      }
+    }
+
+    return Array.from(map.entries()).map(([label, total]) => ({
+      label,
+      total,
+    }));
+  }, [usage]);
+
+  // グラフ描画用の最大値
+  const monthlyMax = useMemo(() => {
+    return Math.max(
+      1,
+      ...monthlyData.map((m) => m.total) // 1 以上にしておく
+    );
+  }, [monthlyData]);
 
   // アカウントID更新
   const handleUpdateAccountId = async (p: Profile, newId: string) => {
     const trimmed = newId.trim();
+
     if (!trimmed) {
       alert('アカウントIDを入力してください。');
       return;
@@ -229,7 +280,6 @@ export default function AdminPage() {
 
       if (updateError) throw updateError;
 
-      // ローカル更新
       setProfiles((prev) =>
         prev.map((row) =>
           row.id === p.id ? { ...row, account_id: trimmed } : row
@@ -244,7 +294,7 @@ export default function AdminPage() {
     }
   };
 
-  // ===== 画面レンダリング =====
+  // ===== レンダリング =====
 
   if (loading) {
     return (
@@ -270,56 +320,196 @@ export default function AdminPage() {
   return (
     <main className="min-h-screen bg-slate-50 px-4 py-6">
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* ヘッダー */}
-        <header className="flex flex-col gap-1">
-          <h1 className="text-2xl font-bold text-slate-900">管理ダッシュボード</h1>
-          <p className="text-xs text-slate-500">
-            ログイン中: {me?.email ?? '-'} / アカウントID:{' '}
-            {me?.account_id ?? '未設定'} / マスター権限:{' '}
-            {me?.is_master ? 'ON' : 'OFF'}
-          </p>
+        {/* ===== ヘッダー ===== */}
+        <header className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              ダッシュボード
+            </h1>
+            <p className="text-xs text-slate-500 mt-1">
+              ログイン中: {me?.email ?? '-'} / アカウントID:{' '}
+              {me?.account_id ?? '未設定'} / マスター権限:{' '}
+              {me?.is_master ? 'ON' : 'OFF'}
+            </p>
+          </div>
+          <div className="flex gap-2 text-[11px] text-slate-500">
+            <span className="inline-flex items-center gap-1">
+              <span className="h-3 w-3 rounded-full bg-teal-500" /> URL要約
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-3 w-3 rounded-full bg-sky-500" /> 画像
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <span className="h-3 w-3 rounded-full bg-emerald-500" /> Chat
+            </span>
+          </div>
         </header>
 
-        {/* 全体サマリ */}
-        <section className="grid gap-3 md:grid-cols-4">
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-            <div className="text-[11px] text-slate-500 mb-1">
-              URL要約 実行回数（24ヶ月）
+        {/* ===== 上段：サマリ＋ドーナツ＋グラフ ===== */}
+        <section className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+          {/* 左：ドーナツ＋ミニカード */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col md:flex-row items-center gap-4">
+            {/* ドーナツチャート風 */}
+            <div className="relative h-32 w-32 md:h-40 md:w-40">
+              <svg viewBox="0 0 120 120" className="h-full w-full">
+                {/* 外側リング */}
+                <circle
+                  cx="60"
+                  cy="60"
+                  r="50"
+                  fill="none"
+                  stroke="#e5f3f0"
+                  strokeWidth="12"
+                />
+                {/* 使用率リング（全回数 / 目標10,000としてざっくり） */}
+                {total.calls > 0 && (
+                  <circle
+                    cx="60"
+                    cy="60"
+                    r="50"
+                    fill="none"
+                    stroke="#14b8a6"
+                    strokeWidth="12"
+                    strokeLinecap="round"
+                    strokeDasharray={`${Math.min(
+                      (total.calls / 10000) * 314,
+                      314
+                    )} 314`}
+                    transform="rotate(-90 60 60)"
+                  />
+                )}
+              </svg>
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-center">
+                <div className="text-xs text-slate-400">総リクエスト数</div>
+                <div className="text-xl md:text-2xl font-bold text-slate-900">
+                  {total.calls}
+                </div>
+                <div className="text-[11px] text-slate-400">
+                  概算原価 ${total.cost.toFixed(3)}
+                </div>
+              </div>
             </div>
-            <div className="text-xl font-bold text-slate-900">{total.url}</div>
+
+            {/* 数値カード */}
+            <div className="flex-1 grid gap-2 w-full">
+              <div className="grid grid-cols-3 gap-2 text-[11px] md:text-xs">
+                <div className="rounded-xl bg-teal-50 px-3 py-2">
+                  <div className="text-slate-500 mb-1 flex items-center gap-1">
+                    <span className="inline-block h-2 w-2 rounded-full bg-teal-500" />
+                    URL要約
+                  </div>
+                  <div className="text-lg font-bold text-slate-900">
+                    {total.url}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-sky-50 px-3 py-2">
+                  <div className="text-slate-500 mb-1 flex items-center gap-1">
+                    <span className="inline-block h-2 w-2 rounded-full bg-sky-500" />
+                    画像
+                  </div>
+                  <div className="text-lg font-bold text-slate-900">
+                    {total.vision}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-emerald-50 px-3 py-2">
+                  <div className="text-slate-500 mb-1 flex items-center gap-1">
+                    <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
+                    Chat
+                  </div>
+                  <div className="text-lg font-bold text-slate-900">
+                    {total.chat}
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-400 mt-1">
+                ※ 24ヶ月分の usage_logs を集計しています。金額は
+                gpt-4.1-mini のトークン単価から算出した概算です。
+              </p>
+            </div>
           </div>
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-            <div className="text-[11px] text-slate-500 mb-1">
-              画像生成 実行回数（24ヶ月）
+
+          {/* 右：月別グラフ（スマホでも見やすいバー） */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 flex flex-col">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-slate-900">
+                月別リクエスト数（直近12ヶ月）
+              </h2>
+              <span className="text-[11px] text-slate-400">
+                合計 {total.calls} 回
+              </span>
             </div>
-            <div className="text-xl font-bold text-slate-900">
-              {total.vision}
-            </div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-            <div className="text-[11px] text-slate-500 mb-1">
-              Chat 実行回数（24ヶ月）
-            </div>
-            <div className="text-xl font-bold text-slate-900">{total.chat}</div>
-          </div>
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-            <div className="text-[11px] text-slate-500 mb-1">
-              概算 API 原価（USD, 24ヶ月）
-            </div>
-            <div className="text-xl font-bold text-slate-900">
-              ${total.cost.toFixed(3)}
+
+            <div className="relative w-full h-40 md:h-52">
+              <svg
+                viewBox="0 0 320 140"
+                className="w-full h-full text-teal-500"
+              >
+                {/* 横グリッド */}
+                {[0, 0.25, 0.5, 0.75, 1].map((t) => (
+                  <line
+                    key={t}
+                    x1={20}
+                    x2={310}
+                    y1={20 + 100 * t}
+                    y2={20 + 100 * t}
+                    stroke="#e5e7eb"
+                    strokeWidth={0.5}
+                  />
+                ))}
+
+                {/* 棒グラフ */}
+                {monthlyData.map((m, idx) => {
+                  const barWidth = 16;
+                  const gap = 24;
+                  const x = 30 + idx * gap;
+                  const height = (m.total / monthlyMax) * 100;
+                  const y = 120 - height;
+                  return (
+                    <g key={m.label}>
+                      <rect
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        height={height}
+                        rx={4}
+                        className="fill-teal-500/70"
+                      />
+                    </g>
+                  );
+                })}
+
+                {/* X軸ラベル（2ヶ月おきに表示） */}
+                {monthlyData.map((m, idx) => {
+                  if (idx % 2 !== 0) return null;
+                  const x = 30 + idx * 24 + 8;
+                  const [year, month] = m.label.split('-');
+                  return (
+                    <text
+                      key={m.label}
+                      x={x}
+                      y={135}
+                      textAnchor="middle"
+                      fontSize="8"
+                      fill="#6b7280"
+                    >
+                      {`${Number(month)}月`}
+                    </text>
+                  );
+                })}
+              </svg>
             </div>
           </div>
         </section>
 
-        {/* ユーザー別 使用状況 + アカウントID編集 */}
+        {/* ===== 下段：ユーザー別 使用状況 ＋ アカウントID編集 ===== */}
         <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 md:p-6">
           <h2 className="text-lg font-semibold text-slate-900 mb-2">
-            ユーザー別 使用状況 ＆ アカウントID編集
+            ユーザー一覧 ＆ アカウントID編集
           </h2>
           <p className="text-xs text-slate-500 mb-4">
             メールアドレスごとに 5桁のアカウントIDを設定・変更できます。
-            使用回数と概算料金は usage_logs をもとに、自動集計されています。
+            使用回数と概算料金は usage_logs をもとに自動集計されています。
           </p>
 
           <div className="overflow-x-auto">
@@ -329,10 +519,10 @@ export default function AdminPage() {
                   <th className="px-3 py-1">#</th>
                   <th className="px-3 py-1">メールアドレス</th>
                   <th className="px-3 py-1">アカウントID</th>
-                  <th className="px-3 py-1">URL回数</th>
-                  <th className="px-3 py-1">画像回数</th>
-                  <th className="px-3 py-1">Chat回数</th>
-                  <th className="px-3 py-1">概算原価(USD)</th>
+                  <th className="px-3 py-1 text-right">URL</th>
+                  <th className="px-3 py-1 text-right">画像</th>
+                  <th className="px-3 py-1 text-right">Chat</th>
+                  <th className="px-3 py-1 text-right">概算原価(USD)</th>
                   <th className="px-3 py-1">マスター</th>
                   <th className="px-3 py-1">登録日</th>
                   <th className="px-3 py-1"></th>
@@ -351,7 +541,7 @@ export default function AdminPage() {
                       </td>
                       <td className="px-3 py-1 align-middle">
                         <div
-                          className="max-w-[200px] md:max-w-xs truncate"
+                          className="max-w-[180px] md:max-w-xs truncate"
                           title={p?.email ?? ''}
                         >
                           {p?.email ?? '(unknown user)'}
