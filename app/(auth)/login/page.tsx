@@ -151,7 +151,7 @@ export default function AuthPage() {
       <div style={cardStyle}>
         <div style={{ marginBottom: 12 }}>
         <h1 style={titleStyle}>
-  auto post studio
+  Auto post studio
 </h1>
 <p style={{ fontSize: 11, color: '#6b7280', textAlign: 'center', marginTop: 2 }}>
   SNS投稿サポートツール
