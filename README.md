@@ -1,5 +1,5 @@
 
-# GPT + Supabase Starter（修正版）
+# Auto post studio
 - Path alias `@/` を有効化（tsconfig の baseUrl + paths）
 - クライアントは `NEXT_PUBLIC_SUPABASE_ANON_KEY` のみを使用（`service_role` はサーバールートのみ）
 
