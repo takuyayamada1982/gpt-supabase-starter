@@ -15,7 +15,83 @@ type Profile = {
 // 画面上部に出すトライアルバナー
 function TrialBanner({ profile }: { profile: Profile | null }) {
   if (!profile?.registered_at) return null;
-  if (profile.plan_status === 'paid') return null; // 契約中ならバナー非表示
+
+  // ① ご契約中（plan_status = 'paid'）の表示
+  if (profile.plan_status === 'paid') {
+    return (
+      <div
+        style={{
+          backgroundColor: '#111827',   // ダークネイビー
+          color: '#bfdbfe',              // 明るいブルー
+          padding: '8px 12px',
+          borderRadius: 10,
+          fontSize: 12,
+          textAlign: 'center',
+          marginBottom: 12,
+          border: '1px solid #1f2937',
+        }}
+      >
+        ✅ ご契約中です。いつもご利用ありがとうございます。
+      </div>
+    );
+  }
+
+  // ② ここから下は「無料トライアル」の表示ロジック
+  const registered = new Date(profile.registered_at);
+  const today = new Date();
+  const diffDays = Math.floor(
+    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const trialDays = profile.trial_type === 'referral' ? 30 : 7;
+  const remaining = trialDays - diffDays;
+
+  let bg = '#064e3b';
+  let textColor = '#bbf7d0';
+  let text = `無料期間：残り ${remaining}日`;
+
+  if (remaining > 2) {
+    if (profile.trial_type === 'referral') {
+      bg = '#1d4ed8';
+      textColor = '#bfdbfe';
+      text = `紹介経由：無料期間 残り ${remaining}日`;
+    } else {
+      bg = '#064e3b';
+      textColor = '#bbf7d0';
+      text = `無料期間：残り ${remaining}日`;
+    }
+  } else if (remaining > 0) {
+    bg = '#7c2d12';
+    textColor = '#fed7aa';
+    text = `まもなく無料期間終了（残り ${remaining}日）`;
+  } else if (remaining === 0) {
+    bg = '#b91c1c';
+    textColor = '#fee2e2';
+    text = '無料期間は本日で終了します';
+  } else {
+    const daysAgo = Math.abs(remaining);
+    bg = '#7f1d1d';
+    textColor = '#fecaca';
+    text = `無料期間終了（${daysAgo}日前）`;
+  }
+
+  return (
+    <div
+      style={{
+        backgroundColor: bg,
+        color: textColor,
+        padding: '8px 12px',
+        borderRadius: 10,
+        fontSize: 12,
+        textAlign: 'center',
+        marginBottom: 12,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
 
   const registered = new Date(profile.registered_at);
   const today = new Date();
