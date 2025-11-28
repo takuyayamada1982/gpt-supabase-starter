@@ -3,26 +3,19 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 
-type Msg = { role: 'user' | 'assistant', content: string };
+type Msg = { role: 'user' | 'assistant'; content: string };
 
-// プロファイル情報（トライアル状態用）
-type Profile = {
-  registered_at: string | null;
-  trial_type: 'normal' | 'referral' | null;
-  plan_status: 'trial' | 'paid' | null;
-};
-
-// 画面上部に出すトライアルバナー
-function TrialBanner({ profile }: { profile: Profile | null }) {
+// 上部に出すバナー（トライアル + ご契約中）
+function TrialBanner({ profile }: { profile: any }) {
   if (!profile?.registered_at) return null;
 
-  // ① ご契約中（plan_status = 'paid'）の表示
+  // 契約中（plan_status = 'paid'）なら「ご契約中」表示
   if (profile.plan_status === 'paid') {
     return (
       <div
         style={{
-          backgroundColor: '#111827',   // ダークネイビー
-          color: '#bfdbfe',              // 明るいブルー
+          backgroundColor: '#111827', // ダークネイビー
+          color: '#bfdbfe',
           padding: '8px 12px',
           borderRadius: 10,
           fontSize: 12,
@@ -36,11 +29,11 @@ function TrialBanner({ profile }: { profile: Profile | null }) {
     );
   }
 
-  // ② ここから下は「無料トライアル」の表示ロジック
+  // ここから下はトライアル中/終了後の表示
   const registered = new Date(profile.registered_at);
   const today = new Date();
   const diffDays = Math.floor(
-    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24)
+    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24),
   );
 
   const trialDays = profile.trial_type === 'referral' ? 30 : 7;
@@ -63,63 +56,7 @@ function TrialBanner({ profile }: { profile: Profile | null }) {
   } else if (remaining > 0) {
     bg = '#7c2d12';
     textColor = '#fed7aa';
-    text = `まもなく無料期間終了（残り ${remaining}日）`;
-  } else if (remaining === 0) {
-    bg = '#b91c1c';
-    textColor = '#fee2e2';
-    text = '無料期間は本日で終了します';
-  } else {
-    const daysAgo = Math.abs(remaining);
-    bg = '#7f1d1d';
-    textColor = '#fecaca';
-    text = `無料期間終了（${daysAgo}日前）`;
-  }
-
-  return (
-    <div
-      style={{
-        backgroundColor: bg,
-        color: textColor,
-        padding: '8px 12px',
-        borderRadius: 10,
-        fontSize: 12,
-        textAlign: 'center',
-        marginBottom: 12,
-      }}
-    >
-      {text}
-    </div>
-  );
-}
-
-
-  const registered = new Date(profile.registered_at);
-  const today = new Date();
-  const diffDays = Math.floor(
-    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  const trialDays = profile.trial_type === 'referral' ? 30 : 7;
-  const remaining = trialDays - diffDays;
-
-  let bg = '#064e3b';
-  let textColor = '#bbf7d0';
-  let text = `無料期間：残り ${remaining}日`;
-
-  if (remaining > 2) {
-    if (profile.trial_type === 'referral') {
-      bg = '#1d4ed8';
-      textColor = '#bfdbfe';
-      text = `紹介経由：無料期間 残り ${remaining}日`;
-    } else {
-      bg = '#064e3b';
-      textColor = '#bbf7d0';
-      text = `無料期間：残り ${remaining}日`;
-    }
-  } else if (remaining > 0) {
-    bg = '#7c2d12';
-    textColor = '#fed7aa';
-    text = `まもなく無料期間終了（残り ${remaining}日）`;
+    text = `まもなく終了（残り${remaining}日）`;
   } else if (remaining === 0) {
     bg = '#b91c1c';
     textColor = '#fee2e2';
@@ -149,8 +86,8 @@ function TrialBanner({ profile }: { profile: Profile | null }) {
 }
 
 export default function UPage() {
-  const [userId, setUserId] = useState<string>('');
-  const [profile, setProfile] = useState<Profile | null>(null);
+  const [userId, setUserId] = useState('');
+  const [profile, setProfile] = useState<any>(null);
 
   // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
   const [urlInput, setUrlInput] = useState('');
@@ -162,7 +99,7 @@ export default function UPage() {
   const [fbText, setFbText] = useState('');
   const [xText, setXText] = useState('');
 
-  // 🔹 紹介パターン（1〜3のラジオボタン）
+  // 紹介パターン（1〜3のラジオボタン）
   const [stance, setStance] = useState<'self' | 'others' | 'third'>('self');
 
   const stancePrompts = {
@@ -171,13 +108,13 @@ export default function UPage() {
     others:
       'あなたは第三者として、他人のSNS記事を自分のフォロワーに紹介します。著者へのリスペクトを示し、出典・引用であることを明確にしつつ、紹介者としての簡単な一言コメントを添えてください。',
     third:
-      'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。'
+      'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。',
   } as const;
 
   // ===== 画像 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [imageNote, setImageNote] = useState(''); // 🔹補足説明欄
+  const [imageNote, setImageNote] = useState(''); // 補足説明欄
 
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
@@ -192,28 +129,25 @@ export default function UPage() {
 
       setUserId(user.id);
 
-      // プロファイル取得（トライアル情報用）
-      const { data: p } = await supabase
+      // プロファイル（トライアル情報）取得
+      const { data: p } = await (supabase as any)
         .from('profiles')
         .select('registered_at, trial_type, plan_status')
         .eq('id', user.id)
         .single();
 
-      if (p) {
-        setProfile(p as Profile);
-      }
+      if (p) setProfile(p);
     })();
   }, []);
 
-  // ===== THEME（落ち着いたリッチ配色） =====
+  // ===== テーマ（色など） =====
   const colors = {
-    pageBg: '#FCFAF5',         // ページ背景（薄いクリーム）
+    pageBg: '#FCFAF5',
     ink: '#111111',
     panelBorder: '#E5E7EB',
     panelBg: '#FFFFFF',
     panelShadow: '0 6px 20px rgba(0,0,0,0.06)',
 
-    // SNSカードの配色（淡い背景 + 枠 + 文字）
     igBg: '#FFF5F9',
     igBorder: '#F8C2D8',
     igText: '#3B1C2A',
@@ -226,82 +160,81 @@ export default function UPage() {
     xBorder: '#D6D6DA',
     xText: '#111111',
 
-    // ボタン
     btnBg: '#111111',
     btnText: '#FFFFFF',
     btnBorder: '#111111',
     btnGhostBorder: '#DDDDDD',
-    btnGhostBg: '#FFFFFF'
+    btnGhostBg: '#FFFFFF',
   };
 
-  const pageStyle: React.CSSProperties = {
+  const pageStyle = {
     maxWidth: 1080,
     margin: '0 auto',
     padding: 16,
     background: colors.pageBg,
-    boxSizing: 'border-box'
+    boxSizing: 'border-box' as const,
   };
 
-  const panel: React.CSSProperties = {
+  const panel = {
     background: colors.panelBg,
     border: `1px solid ${colors.panelBorder}`,
     borderRadius: 14,
     padding: 16,
     boxShadow: colors.panelShadow,
-    overflow: 'hidden'
+    overflow: 'hidden' as const,
   };
 
-  const btn: React.CSSProperties = {
+  const btn = {
     padding: '10px 14px',
     borderRadius: 10,
     border: `1px solid ${colors.btnBorder}`,
     background: colors.btnBg,
     color: colors.btnText,
-    fontWeight: 600
+    fontWeight: 600 as const,
   };
-  const btnGhost: React.CSSProperties = {
+  const btnGhost = {
     padding: '10px 14px',
     borderRadius: 10,
     border: `1px solid ${colors.btnGhostBorder}`,
     background: colors.btnGhostBg,
     color: colors.ink,
-    fontWeight: 600
+    fontWeight: 600 as const,
   };
-  const inputStyle: React.CSSProperties = {
+  const inputStyle = {
     border: `1px solid ${colors.btnGhostBorder}`,
     padding: 12,
     borderRadius: 10,
     width: '100%',
-    boxSizing: 'border-box',
-    background: '#FFFFFF'
+    boxSizing: 'border-box' as const,
+    background: '#FFFFFF',
   };
-  const labelStyle: React.CSSProperties = {
+  const labelStyle = {
     fontSize: 12,
     color: '#6b7280',
     marginBottom: 6,
-    display: 'block'
+    display: 'block' as const,
   };
 
-  const cardGrid: React.CSSProperties = {
+  const cardGrid = {
     display: 'grid',
     gap: 12,
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))'
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
   };
 
-  const snsCardBase: React.CSSProperties = {
+  const snsCardBase = {
     borderRadius: 12,
     padding: 12,
-    boxSizing: 'border-box',
-    overflow: 'hidden'
+    boxSizing: 'border-box' as const,
+    overflow: 'hidden' as const,
   };
 
-  const textAreaStyle: React.CSSProperties = {
+  const textAreaStyle = {
     ...inputStyle,
     height: 160,
-    resize: 'vertical',
-    overflow: 'auto',
-    whiteSpace: 'pre-wrap',
-    wordBreak: 'break-word'
+    resize: 'vertical' as const,
+    overflow: 'auto' as const,
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-word' as const,
   };
 
   const copy = async (text: string) => {
@@ -315,8 +248,14 @@ export default function UPage() {
 
   // ===== URL → まとめて生成 =====
   const generateFromURL = async () => {
-    if (!userId) { alert('ログインが必要です'); return; }
-    if (!urlInput) { alert('URLを入力してください'); return; }
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!urlInput) {
+      alert('URLを入力してください');
+      return;
+    }
 
     setUrlLoading(true);
     try {
@@ -326,8 +265,8 @@ export default function UPage() {
         body: JSON.stringify({
           userId,
           url: urlInput,
-          promptContext: stancePrompts[stance]   // 🔹ラジオボタンの内容を渡す
-        })
+          promptContext: stancePrompts[stance],
+        }),
       });
       const j = await res.json();
       if (j?.error) throw new Error(j.error);
@@ -373,12 +312,10 @@ export default function UPage() {
     setIsGenerating(true);
 
     try {
-      // 日本語・スペースのない安全なファイル名
       const ext = imageFile.name.split('.').pop() || 'jpg';
       const safeFileName = `${Date.now()}.${ext}`;
-      const path = `${userId}/${safeFileName}`; // Supabase に保存する filePath
+      const path = `${userId}/${safeFileName}`;
 
-      // 一時的に Supabase にアップロード
       const up = await supabase.storage
         .from('uploads')
         .upload(path, imageFile, {
@@ -391,9 +328,10 @@ export default function UPage() {
         return;
       }
 
-      const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
-      const pFb = `Facebook向け：ストーリー重視で約700文字。改行。最後に3〜6個のハッシュタグ。`;
-      const pX = `X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。`;
+      const pInsta = 'Instagram向け：約200文字。最後に3〜6個のハッシュタグ。';
+      const pFb =
+        'Facebook向け：ストーリー重視で約700文字。改行。最後に3〜6個のハッシュタグ。';
+      const pX = 'X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。';
 
       const payload = (prompt: string) => ({
         method: 'POST',
@@ -401,7 +339,7 @@ export default function UPage() {
         body: JSON.stringify({
           userId,
           prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-          filePath: path, // ← ここだけ渡す
+          filePath: path,
         }),
       });
 
@@ -411,15 +349,11 @@ export default function UPage() {
         fetch('/api/vision', payload(pX)),
       ]);
 
-      const [j1, j2, j3] = await Promise.all([
-        r1.json(),
-        r2.json(),
-        r3.json(),
-      ]);
+      const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
 
       if (j1?.error || j2?.error || j3?.error) {
         throw new Error(
-          j1?.error || j2?.error || j3?.error || '生成に失敗しました'
+          j1?.error || j2?.error || j3?.error || '生成に失敗しました',
         );
       }
 
@@ -440,16 +374,16 @@ export default function UPage() {
   const sendChat = async () => {
     if (!userId || !chatInput) return;
     setChatLoading(true);
-    setMessages(m => [...m, { role: 'user', content: chatInput }]);
+    setMessages((m) => [...m, { role: 'user', content: chatInput }]);
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, userText: chatInput })
+        body: JSON.stringify({ userId, userText: chatInput }),
       });
       const j = await res.json();
-      setMessages(m => [...m, { role: 'assistant', content: j.text || '' }]);
+      setMessages((m) => [...m, { role: 'assistant', content: j.text || '' }]);
       setChatInput('');
     } catch (e: any) {
       alert(`エラー: ${e.message}`);
@@ -460,16 +394,30 @@ export default function UPage() {
 
   return (
     <main style={pageStyle}>
-      {/* 🔔 無料トライアルの残り日数バナー */}
+      {/* 🔔 トライアル / ご契約中バナー */}
       <TrialBanner profile={profile} />
 
-      <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12, color: colors.ink }}>
+      <h2
+        style={{
+          fontSize: 20,
+          fontWeight: 800,
+          marginBottom: 12,
+          color: colors.ink,
+        }}
+      >
         ユーザーページ
       </h2>
 
       {/* ===== ① URL → 生成（上段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            marginBottom: 8,
+            color: colors.ink,
+          }}
+        >
           ① URLからSNS向け文章を自動生成
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
@@ -478,18 +426,18 @@ export default function UPage() {
             style={inputStyle}
             placeholder="https://example.com/article"
             value={urlInput}
-            onChange={e => setUrlInput(e.target.value)}
+            onChange={(e) => setUrlInput(e.target.value)}
             inputMode="url"
           />
 
-          {/* 🔹 ラジオボタン：紹介する立場 */}
+          {/* ラジオボタン：紹介する立場 */}
           <div style={{ marginTop: 4 }}>
             <div
               style={{
                 fontSize: 12,
                 fontWeight: 700,
                 marginBottom: 6,
-                color: '#374151'
+                color: '#374151',
               }}
             >
               紹介する立場を選んでください
@@ -539,7 +487,7 @@ export default function UPage() {
           </div>
         </div>
 
-        {/* 要約・タイトル案・ハッシュタグ候補（URL生成後に表示） */}
+        {/* 要約・タイトル案・ハッシュタグ候補 */}
         {(urlSummary || urlTitles.length || urlHashtags.length) ? (
           <div
             style={{
@@ -547,13 +495,19 @@ export default function UPage() {
               marginTop: 12,
               paddingTop: 12,
               display: 'grid',
-              gap: 12
+              gap: 12,
             }}
           >
             {/* 要約 */}
             {urlSummary && (
               <div>
-                <div style={{ fontWeight: 700, marginBottom: 6, color: colors.ink }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: colors.ink,
+                  }}
+                >
                   要約（200〜300文字）
                 </div>
                 <div
@@ -562,7 +516,7 @@ export default function UPage() {
                     borderRadius: 10,
                     padding: 12,
                     background: '#FAFAFA',
-                    whiteSpace: 'pre-wrap'
+                    whiteSpace: 'pre-wrap',
                   }}
                 >
                   {urlSummary}
@@ -578,14 +532,25 @@ export default function UPage() {
             {/* タイトル案 */}
             {urlTitles.length > 0 && (
               <div>
-                <div style={{ fontWeight: 700, marginBottom: 6, color: colors.ink }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: colors.ink,
+                  }}
+                >
                   タイトル案（3つ）
                 </div>
                 <ul style={{ listStyle: 'disc', paddingLeft: 20, margin: 0 }}>
                   {urlTitles.map((t, i) => (
                     <li
                       key={i}
-                      style={{ marginBottom: 6, display: 'flex', gap: 8, alignItems: 'flex-start' }}
+                      style={{
+                        marginBottom: 6,
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'flex-start',
+                      }}
                     >
                       <span style={{ flex: 1 }}>{t}</span>
                       <button style={btnGhost} onClick={() => copy(t)}>
@@ -600,7 +565,13 @@ export default function UPage() {
             {/* ハッシュタグ候補 */}
             {urlHashtags.length > 0 && (
               <div>
-                <div style={{ fontWeight: 700, marginBottom: 6, color: colors.ink }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: colors.ink,
+                  }}
+                >
                   ハッシュタグ候補（10〜15）
                 </div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
@@ -611,7 +582,7 @@ export default function UPage() {
                         border: '1px solid #eee',
                         borderRadius: 999,
                         padding: '6px 10px',
-                        background: '#fff'
+                        background: '#fff',
                       }}
                     >
                       {h}
@@ -634,7 +605,14 @@ export default function UPage() {
 
       {/* ===== ② 画像 → 生成（中段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            marginBottom: 8,
+            color: colors.ink,
+          }}
+        >
           ② 画像からSNS向け文章を自動生成
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
@@ -642,12 +620,17 @@ export default function UPage() {
           <input
             type="file"
             accept="image/*"
-            onChange={e => {
+            onChange={(e) => {
               const f = e.target.files?.[0] || null;
-              if (!f) { setImageFile(null); return; }
+              if (!f) {
+                setImageFile(null);
+                return;
+              }
               const t = (f.type || '').toLowerCase();
               if (t.includes('heic') || t.includes('heif')) {
-                alert('HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。');
+                alert(
+                  'HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。',
+                );
                 (e.currentTarget as HTMLInputElement).value = '';
                 setImageFile(null);
                 return;
@@ -656,18 +639,18 @@ export default function UPage() {
             }}
           />
 
-          {/* 🔹 補足説明欄 */}
+          {/* 補足説明欄 */}
           <label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
           <textarea
             style={{
               ...inputStyle,
               height: 72,
-              resize: 'vertical',
-              whiteSpace: 'pre-wrap'
+              resize: 'vertical' as const,
+              whiteSpace: 'pre-wrap' as const,
             }}
             placeholder="例：地域イベントで撮影した写真。子どもたちが作った作品展示の様子。"
             value={imageNote}
-            onChange={e => setImageNote(e.target.value)}
+            onChange={(e) => setImageNote(e.target.value)}
           />
 
           <div>
@@ -681,7 +664,7 @@ export default function UPage() {
           </div>
         </div>
 
-        {/* 3カラム：SNS欄（URL生成でも画像生成でもここに反映） */}
+        {/* 3カラム：SNS欄 */}
         <div style={cardGrid}>
           {/* Instagram */}
           <div
@@ -689,7 +672,7 @@ export default function UPage() {
               ...snsCardBase,
               background: colors.igBg,
               border: `1px solid ${colors.igBorder}`,
-              color: colors.igText
+              color: colors.igText,
             }}
           >
             <div style={{ fontWeight: 800, marginBottom: 6 }}>
@@ -698,10 +681,17 @@ export default function UPage() {
             <textarea
               style={{ ...textAreaStyle, background: '#FFFFFF' }}
               value={instaText}
-              onChange={e => setInstaText(e.target.value)}
+              onChange={(e) => setInstaText(e.target.value)}
               placeholder="ここにInstagram向けの説明が入ります"
             />
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
               <button style={btnGhost} onClick={() => copy(instaText)}>
                 コピー
               </button>
@@ -714,7 +704,7 @@ export default function UPage() {
               ...snsCardBase,
               background: colors.fbBg,
               border: `1px solid ${colors.fbBorder}`,
-              color: colors.fbText
+              color: colors.fbText,
             }}
           >
             <div style={{ fontWeight: 800, marginBottom: 6 }}>
@@ -723,23 +713,30 @@ export default function UPage() {
             <textarea
               style={{ ...textAreaStyle, height: 220, background: '#FFFFFF' }}
               value={fbText}
-              onChange={e => setFbText(e.target.value)}
+              onChange={(e) => setFbText(e.target.value)}
               placeholder="ここにFacebook向けの説明が入ります"
             />
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
               <button style={btnGhost} onClick={() => copy(fbText)}>
                 コピー
               </button>
             </div>
           </div>
 
-          {/* X / Twitter */}
+          {/* X */}
           <div
             style={{
               ...snsCardBase,
               background: colors.xBg,
               border: `1px solid ${colors.xBorder}`,
-              color: colors.xText
+              color: colors.xText,
             }}
           >
             <div style={{ fontWeight: 800, marginBottom: 6 }}>
@@ -748,10 +745,17 @@ export default function UPage() {
             <textarea
               style={{ ...textAreaStyle, height: 140, background: '#FFFFFF' }}
               value={xText}
-              onChange={e => setXText(e.target.value)}
+              onChange={(e) => setXText(e.target.value)}
               placeholder="ここにX向けの説明が入ります"
             />
-            <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
               <button style={btnGhost} onClick={() => copy(xText)}>
                 コピー
               </button>
@@ -762,7 +766,14 @@ export default function UPage() {
 
       {/* ===== ③ 通常チャット（下段） ===== */}
       <div style={{ ...panel }}>
-        <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 8, color: colors.ink }}>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            marginBottom: 8,
+            color: colors.ink,
+          }}
+        >
           ③ 通常チャット
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
@@ -771,16 +782,16 @@ export default function UPage() {
             style={{
               ...inputStyle,
               height: 96,
-              resize: 'vertical',
-              overflow: 'auto',
-              whiteSpace: 'pre-wrap'
+              resize: 'vertical' as const,
+              overflow: 'auto' as const,
+              whiteSpace: 'pre-wrap' as const,
             }}
             placeholder={
               '例: 「このテキストを要約して、X向けに150文字で」\n' +
               '例: 「Instagram / Facebook / X それぞれのトーンで整えて」'
             }
             value={chatInput}
-            onChange={e => setChatInput(e.target.value)}
+            onChange={(e) => setChatInput(e.target.value)}
           />
           <div>
             <button
@@ -801,18 +812,32 @@ export default function UPage() {
                 border: '1px solid #eee',
                 borderRadius: 10,
                 padding: 12,
-                background: m.role === 'user' ? '#F0F9FF' : '#F9FAFB'
+                background: m.role === 'user' ? '#F0F9FF' : '#F9FAFB',
               }}
             >
-              <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 4 }}>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: '#6b7280',
+                  marginBottom: 4,
+                }}
+              >
                 {m.role}
               </div>
-              <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              <div
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
                 {m.content}
               </div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop: 8 }}>
-                  <button style={btnGhost} onClick={() => copy(m.content)}>
+                  <button
+                    style={btnGhost}
+                    onClick={() => copy(m.content)}
+                  >
                     この返信をコピー
                   </button>
                 </div>
