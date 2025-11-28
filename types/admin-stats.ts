@@ -17,4 +17,35 @@ export interface AdminSummary {
   };
 }
 
-// …（略）※ 長いので必要なら再送します！
+export interface MonthlyUsage {
+  month: string; // 'YYYY-MM'
+  urlCount: number;
+  visionCount: number;
+  chatCount: number;
+  totalCost: number;
+}
+
+export interface TopUserUsage {
+  userId: string;
+  accountId: string;
+  email: string;
+  urlCount: number;
+  visionCount: number;
+  chatCount: number;
+  totalCost: number;
+}
+
+export interface RecentLog {
+  id: string;
+  createdAt: string;
+  type: AdminUsageType;
+  userEmail: string;
+  accountId: string;
+}
+
+export interface AdminStatsResponse {
+  summary: AdminSummary;
+  monthlyUsage: MonthlyUsage[];
+  topUsers: TopUserUsage[];
+  recentLogs: RecentLog[];
+}
