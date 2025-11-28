@@ -9,65 +9,16 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
   LineChart,
   Line,
   Legend,
 } from 'recharts';
-
-type UsageType = 'url' | 'vision' | 'chat';
-
-interface AdminSummary {
-  totalRequests: number;
-  totalUsers: number;
-  monthRequests: number;
-  monthCost: number;
-  monthCountsByType: {
-    url: number;
-    vision: number;
-    chat: number;
-  };
-}
-
-interface MonthlyUsage {
-  month: string; // '2025-01'
-  urlCount: number;
-  visionCount: number;
-  chatCount: number;
-  totalCost: number;
-}
-
-interface TopUserUsage {
-  userId: string;
-  accountId: string;
-  email: string;
-  urlCount: number;
-  visionCount: number;
-  chatCount: number;
-  totalCost: number;
-}
-
-interface RecentLog {
-  id: string;
-  createdAt: string;
-  type: UsageType;
-  userEmail: string;
-  accountId: string;
-}
-
-interface AdminStatsResponse {
-  summary: AdminSummary;
-  monthlyUsage: MonthlyUsage[];
-  topUsers: TopUserUsage[];
-  recentLogs: RecentLog[];
-}
+import type { AdminStatsResponse, AdminUsageType } from '@/types/admin-stats';
 
 export default function AdminPage() {
   const [stats, setStats] = useState<AdminStatsResponse | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [selectedMonth, setSelectedMonth] = useState<string | ''>('');
 
   useEffect(() => {
     const fetchStats = async () => {
@@ -88,7 +39,9 @@ export default function AdminPage() {
   if (loading || !stats) {
     return (
       <div className="min-h-screen bg-slate-950 text-slate-50 flex items-center justify-center">
-        <div className="text-sm text-slate-300">Loading admin dashboard...</div>
+        <div className="text-sm text-slate-300">
+          Loading admin dashboard...
+        </div>
       </div>
     );
   }
@@ -101,10 +54,23 @@ export default function AdminPage() {
     { type: 'Chat', key: 'chat', count: summary.monthCountsByType.chat },
   ];
 
-  const pieData = usageByTypeData.map((d) => ({
-    name: d.type,
-    value: d.count,
-  }));
+  const usageAmountData = [
+    {
+      type: 'URL要約',
+      key: 'url',
+      amount: summary.monthCostsByType.url,
+    },
+    {
+      type: '画像→SNS',
+      key: 'vision',
+      amount: summary.monthCostsByType.vision,
+    },
+    {
+      type: 'Chat',
+      key: 'chat',
+      amount: summary.monthCostsByType.chat,
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-50">
@@ -118,13 +84,11 @@ export default function AdminPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {/* 月選択（とりあえず簡易セレクト） */}
+            {/* 対象月セレクト */}
             <select
               className="rounded-md bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
-              value={selectedMonth ?? ''}
-              onChange={(e) =>
-                setSelectedMonth(e.target.value || null)
-              }
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
             >
               <option value="">最新月</option>
               {monthlyUsage.map((m) => (
@@ -164,7 +128,7 @@ export default function AdminPage() {
           <KpiCard
             title="今月の推定料金"
             value={`¥${summary.monthCost.toLocaleString()}`}
-            subtitle="API原価ベース"
+            subtitle="API原価ベース（URL0.7 / 画像1 / Chat0.3）"
           />
           <KpiCard
             title="累計ユーザー数"
@@ -173,8 +137,9 @@ export default function AdminPage() {
           />
         </section>
 
-        {/* 利用内訳グラフ */}
+        {/* 利用内訳グラフ：回数 & 金額（棒グラフ×2） */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* 回数の棒グラフ */}
           <Card title="今月の利用回数（機能別）">
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -188,30 +153,26 @@ export default function AdminPage() {
             </div>
           </Card>
 
-          <Card title="今月の利用比率（機能別）">
-            <div className="h-64 flex items-center justify-center">
+          {/* 金額の棒グラフ */}
+          <Card title="今月の金額（機能別）">
+            <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={pieData}
-                    dataKey="value"
-                    nameKey="name"
-                    outerRadius={80}
-                    label
-                  >
-                    {pieData.map((_, index) => (
-                      <Cell key={index} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
+                <BarChart data={usageAmountData}>
+                  <XAxis dataKey="type" />
+                  <YAxis />
+                  <Tooltip
+                    formatter={(value: number) =>
+                      `¥${value.toLocaleString()}`
+                    }
+                  />
+                  <Bar dataKey="amount" />
+                </BarChart>
               </ResponsiveContainer>
             </div>
           </Card>
         </section>
 
-        {/* 月次推移 */}
+        {/* 月次推移（最大24ヶ月） */}
         <section>
           <Card title="月次推移（最大24ヶ月）">
             <div className="h-72">
@@ -242,7 +203,7 @@ export default function AdminPage() {
           </Card>
         </section>
 
-        {/* 下段テーブル */}
+        {/* 下段テーブル：ユーザーランキング & 最近のログ */}
         <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {/* ユーザーランキング */}
           <Card title="ユーザー別利用ランキング（上位10）">
@@ -333,8 +294,7 @@ export default function AdminPage() {
   );
 }
 
-// 小さめの再利用コンポーネント
-
+// 再利用コンポーネント
 function KpiCard(props: {
   title: string;
   value: string;
@@ -355,10 +315,7 @@ function KpiCard(props: {
   );
 }
 
-function Card(props: {
-  title: string;
-  children: React.ReactNode;
-}) {
+function Card(props: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4 space-y-2">
       <h2 className="text-sm font-semibold">{props.title}</h2>
@@ -367,7 +324,7 @@ function Card(props: {
   );
 }
 
-function TypeBadge({ type }: { type: UsageType }) {
+function TypeBadge({ type }: { type: AdminUsageType }) {
   const label =
     type === 'url' ? 'URL' : type === 'vision' ? '画像' : 'Chat';
   return (
