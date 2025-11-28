@@ -29,29 +29,61 @@ interface AdminStatsResponse {
   monthly: MonthlyRow[];
 }
 
+interface UserProfile {
+  id: string;
+  email: string | null;
+  account_id: string | null;
+  is_master: boolean | null;
+  registered_at: string | null;
+  deleted_at: string | null;
+  trial_type: string | null;   // 'normal' | 'referral'
+  plan_status: string | null;  // 'trial' | 'paid'
+}
+
+interface AdminUsersResponse {
+  users: UserProfile[];
+}
+
+type TrialStatusKind = 'trial_ok' | 'trial_warning' | 'trial_expired' | 'paid' | 'unknown';
+
+interface TrialStatusView {
+  kind: TrialStatusKind;
+  label: string;
+  bgColor: string;
+  textColor: string;
+}
+
 export default function AdminPage() {
   const [stats, setStats] = useState<AdminStatsResponse | null>(null);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchStats = async () => {
+    const fetchAll = async () => {
       try {
-        const res = await fetch('/api/admin/stats');
-        if (!res.ok) {
-          throw new Error('API error');
-        }
-        const data: AdminStatsResponse = await res.json();
-        setStats(data);
+        const [statsRes, usersRes] = await Promise.all([
+          fetch('/api/admin/stats'),
+          fetch('/api/admin/users'),
+        ]);
+
+        if (!statsRes.ok) throw new Error('stats API error');
+        if (!usersRes.ok) throw new Error('users API error');
+
+        const statsJson: AdminStatsResponse = await statsRes.json();
+        const usersJson: AdminUsersResponse = await usersRes.json();
+
+        setStats(statsJson);
+        setUsers(usersJson.users ?? []);
       } catch (err) {
         console.error(err);
-        setErrorMsg('利用状況の取得に失敗しました');
+        setErrorMsg('管理情報の取得に失敗しました');
       } finally {
         setLoading(false);
       }
     };
 
-    fetchStats();
+    fetchAll();
   }, []);
 
   if (loading) {
@@ -96,8 +128,8 @@ export default function AdminPage() {
     <div
       style={{
         minHeight: '100vh',
-        backgroundColor: '#020617', // slate-950
-        color: '#e5e7eb', // slate-200
+        backgroundColor: '#020617',
+        color: '#e5e7eb',
         fontFamily:
           '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
       }}
@@ -134,7 +166,7 @@ export default function AdminPage() {
                 marginTop: 4,
               }}
             >
-              利用回数とAPI原価を、シンプルな棒グラフで確認できます
+              利用回数・API原価・ユーザー状態をダッシュボードで確認できます
             </p>
           </div>
           <div style={{ textAlign: 'right', fontSize: 12, color: '#9ca3af' }}>
@@ -215,7 +247,7 @@ export default function AdminPage() {
                         style={{
                           width: `${width}%`,
                           height: '100%',
-                          backgroundColor: '#22c55e', // 緑
+                          backgroundColor: '#22c55e',
                           transition: 'width 0.3s ease',
                         }}
                       />
@@ -261,7 +293,7 @@ export default function AdminPage() {
                         style={{
                           width: `${width}%`,
                           height: '100%',
-                          backgroundColor: '#38bdf8', // 青
+                          backgroundColor: '#38bdf8',
                           transition: 'width 0.3s ease',
                         }}
                       />
@@ -304,7 +336,9 @@ export default function AdminPage() {
                     <tr key={m.month} style={{ borderTop: '1px solid #1f2937' }}>
                       <Td>{m.month}</Td>
                       <Td align="right">{m.urlCount.toLocaleString()}</Td>
-                      <Td align="right">{m.visionCount.toLocaleString()}</Td>
+                      <Td align="right">
+                        {m.visionCount.toLocaleString()}
+                      </Td>
                       <Td align="right">{m.chatCount.toLocaleString()}</Td>
                       <Td align="right">
                         {(
@@ -321,12 +355,164 @@ export default function AdminPage() {
             </div>
           </Card>
         </div>
+
+        {/* ユーザー一覧テーブル */}
+        <div style={{ marginTop: 24 }}>
+          <Card title="ユーザー一覧（アカウント情報 & トライアル状態）">
+            <div
+              style={{
+                maxHeight: 320,
+                overflow: 'auto',
+                fontSize: 12,
+              }}
+            >
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                }}
+              >
+                <thead>
+                  <tr style={{ backgroundColor: '#020617' }}>
+                    <Th>アカウントID</Th>
+                    <Th>Email</Th>
+                    <Th>種別</Th>
+                    <Th>登録日</Th>
+                    <Th>ステータス</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {users.map((u) => {
+                    const trialView = getTrialStatus(u);
+                    const typeLabel = getTrialTypeLabel(u.trial_type);
+                    const regDate = formatDateYmd(u.registered_at);
+
+                    return (
+                      <tr
+                        key={u.id}
+                        style={{ borderTop: '1px solid #1f2937' }}
+                      >
+                        <Td>{u.account_id ?? '-'}</Td>
+                        <Td>{u.email ?? '-'}</Td>
+                        <Td>{typeLabel}</Td>
+                          <Td>{regDate}</Td>
+                        <Td>
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              padding: '2px 8px',
+                              borderRadius: 9999,
+                              fontSize: 11,
+                              backgroundColor: trialView.bgColor,
+                              color: trialView.textColor,
+                              whiteSpace: 'nowrap',
+                            }}
+                          >
+                            {trialView.label}
+                          </span>
+                        </Td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+        </div>
       </main>
     </div>
   );
 }
 
-/* 小さいコンポーネントたち */
+/* ===== ユーティリティ関数 ===== */
+
+function getTrialTypeLabel(trialType: string | null): string {
+  if (trialType === 'referral') return '紹介';
+  if (trialType === 'normal') return '通常';
+  return '-';
+}
+
+function formatDateYmd(value: string | null): string {
+  if (!value) return '-';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return '-';
+  const y = d.getFullYear();
+  const m = (d.getMonth() + 1).toString().padStart(2, '0');
+  const day = d.getDate().toString().padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getTrialStatus(user: UserProfile): TrialStatusView {
+  // 契約者なら常に「契約中」扱い
+  if (user.plan_status === 'paid') {
+    return {
+      kind: 'paid',
+      label: '契約中',
+      bgColor: '#1d4ed8',
+      textColor: '#bfdbfe',
+    };
+  }
+
+  if (!user.registered_at) {
+    return {
+      kind: 'unknown',
+      label: '不明',
+      bgColor: '#374151',
+      textColor: '#e5e7eb',
+    };
+  }
+
+  const reg = new Date(user.registered_at);
+  const now = new Date();
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const diffDays = Math.floor((now.getTime() - reg.getTime()) / msPerDay);
+
+  const trialType = user.trial_type === 'referral' ? 'referral' : 'normal';
+  const trialDays = trialType === 'referral' ? 30 : 7;
+
+  const remaining = trialDays - diffDays;
+
+  // 無料期間終了
+  if (remaining <= 0) {
+    const daysAgo = -remaining;
+    return {
+      kind: 'trial_expired',
+      label: `無料期間終了（${daysAgo}日前）`,
+      bgColor: '#7f1d1d',
+      textColor: '#fecaca',
+    };
+  }
+
+  // まもなく終了（残り1〜3日）
+  if (remaining <= 3) {
+    return {
+      kind: 'trial_warning',
+      label: `まもなく終了（残り${remaining}日）`,
+      bgColor: '#7c2d12',
+      textColor: '#fed7aa',
+    };
+  }
+
+  // 通常の無料期間中
+  if (trialType === 'referral') {
+    return {
+      kind: 'trial_ok',
+      label: `紹介：無料期間中（残り${remaining}日）`,
+      bgColor: '#14532d',
+      textColor: '#bbf7d0',
+    };
+  }
+
+  return {
+    kind: 'trial_ok',
+    label: `無料期間中（残り${remaining}日）`,
+    bgColor: '#064e3b',
+    textColor: '#bbf7d0',
+  };
+}
+
+/* ===== 小さなコンポーネントたち ===== */
 
 function FullScreenCenter(props: { children: React.ReactNode }) {
   return (
