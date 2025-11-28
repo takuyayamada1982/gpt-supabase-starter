@@ -78,7 +78,7 @@ export default function AdminPage() {
       <header className="border-b border-slate-800 bg-slate-950/80 backdrop-blur">
         <div className="mx-auto max-w-6xl px-4 py-4 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold">Admin Dashboard</h1>
+            <h1 className="text-xl font-semibold">★新しい管理画面テスト中★</h1>
             <p className="text-xs text-slate-400">
               利用状況と料金をリアルタイムにモニタリング
             </p>
