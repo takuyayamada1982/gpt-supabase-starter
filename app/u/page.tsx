@@ -5,8 +5,76 @@ import { supabase } from '@/lib/supabaseClient';
 
 type Msg = { role: 'user' | 'assistant', content: string };
 
+// プロファイル情報（トライアル状態用）
+type Profile = {
+  registered_at: string | null;
+  trial_type: 'normal' | 'referral' | null;
+  plan_status: 'trial' | 'paid' | null;
+};
+
+// 画面上部に出すトライアルバナー
+function TrialBanner({ profile }: { profile: Profile | null }) {
+  if (!profile?.registered_at) return null;
+  if (profile.plan_status === 'paid') return null; // 契約中ならバナー非表示
+
+  const registered = new Date(profile.registered_at);
+  const today = new Date();
+  const diffDays = Math.floor(
+    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const trialDays = profile.trial_type === 'referral' ? 30 : 7;
+  const remaining = trialDays - diffDays;
+
+  let bg = '#064e3b';
+  let textColor = '#bbf7d0';
+  let text = `無料期間：残り ${remaining}日`;
+
+  if (remaining > 2) {
+    if (profile.trial_type === 'referral') {
+      bg = '#1d4ed8';
+      textColor = '#bfdbfe';
+      text = `紹介経由：無料期間 残り ${remaining}日`;
+    } else {
+      bg = '#064e3b';
+      textColor = '#bbf7d0';
+      text = `無料期間：残り ${remaining}日`;
+    }
+  } else if (remaining > 0) {
+    bg = '#7c2d12';
+    textColor = '#fed7aa';
+    text = `まもなく無料期間終了（残り ${remaining}日）`;
+  } else if (remaining === 0) {
+    bg = '#b91c1c';
+    textColor = '#fee2e2';
+    text = '無料期間は本日で終了します';
+  } else {
+    const daysAgo = Math.abs(remaining);
+    bg = '#7f1d1d';
+    textColor = '#fecaca';
+    text = `無料期間終了（${daysAgo}日前）`;
+  }
+
+  return (
+    <div
+      style={{
+        backgroundColor: bg,
+        color: textColor,
+        padding: '8px 12px',
+        borderRadius: 10,
+        fontSize: 12,
+        textAlign: 'center',
+        marginBottom: 12,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
 export default function UPage() {
   const [userId, setUserId] = useState<string>('');
+  const [profile, setProfile] = useState<Profile | null>(null);
 
   // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
   const [urlInput, setUrlInput] = useState('');
@@ -43,7 +111,21 @@ export default function UPage() {
   useEffect(() => {
     (async () => {
       const { data } = await supabase.auth.getUser();
-      setUserId(data.user?.id || '');
+      const user = data.user;
+      if (!user) return;
+
+      setUserId(user.id);
+
+      // プロファイル取得（トライアル情報用）
+      const { data: p } = await supabase
+        .from('profiles')
+        .select('registered_at, trial_type, plan_status')
+        .eq('id', user.id)
+        .single();
+
+      if (p) {
+        setProfile(p as Profile);
+      }
     })();
   }, []);
 
@@ -190,94 +272,93 @@ export default function UPage() {
     }
   };
 
-// ===== 画像 → SNS =====
-const generateFromImage = async () => {
-  if (!userId) {
-    alert('ログインが必要です');
-    return;
-  }
-  if (!imageFile) {
-    alert('画像を選択してください');
-    return;
-  }
-  if (
-    (imageFile.type || '').toLowerCase().includes('heic') ||
-    (imageFile.type || '').toLowerCase().includes('heif')
-  ) {
-    alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
-    return;
-  }
-  if (imageFile.size > 8 * 1024 * 1024) {
-    alert('画像は8MB以下でお願いします。');
-    return;
-  }
-
-  setIsGenerating(true);
-
-  try {
-    // 日本語・スペースのない安全なファイル名
-    const ext = imageFile.name.split('.').pop() || 'jpg';
-    const safeFileName = `${Date.now()}.${ext}`;
-    const path = `${userId}/${safeFileName}`; // Supabase に保存する filePath
-
-    // 一時的に Supabase にアップロード
-    const up = await supabase.storage
-      .from('uploads')
-      .upload(path, imageFile, {
-        upsert: true,
-        contentType: imageFile.type || 'image/jpeg',
-      });
-
-    if (up.error) {
-      alert(`アップロード失敗：${up.error.message}`);
+  // ===== 画像 → SNS =====
+  const generateFromImage = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!imageFile) {
+      alert('画像を選択してください');
+      return;
+    }
+    if (
+      (imageFile.type || '').toLowerCase().includes('heic') ||
+      (imageFile.type || '').toLowerCase().includes('heif')
+    ) {
+      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
+      return;
+    }
+    if (imageFile.size > 8 * 1024 * 1024) {
+      alert('画像は8MB以下でお願いします。');
       return;
     }
 
-    const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
-    const pFb = `Facebook向け：ストーリー重視で約700文字。改行。最後に3〜6個のハッシュタグ。`;
-    const pX = `X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。`;
+    setIsGenerating(true);
 
-    const payload = (prompt: string) => ({
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userId,
-        prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-        filePath: path, // ← ここだけ渡す
-      }),
-    });
+    try {
+      // 日本語・スペースのない安全なファイル名
+      const ext = imageFile.name.split('.').pop() || 'jpg';
+      const safeFileName = `${Date.now()}.${ext}`;
+      const path = `${userId}/${safeFileName}`; // Supabase に保存する filePath
 
-    const [r1, r2, r3] = await Promise.all([
-      fetch('/api/vision', payload(pInsta)),
-      fetch('/api/vision', payload(pFb)),
-      fetch('/api/vision', payload(pX)),
-    ]);
+      // 一時的に Supabase にアップロード
+      const up = await supabase.storage
+        .from('uploads')
+        .upload(path, imageFile, {
+          upsert: true,
+          contentType: imageFile.type || 'image/jpeg',
+        });
 
-    const [j1, j2, j3] = await Promise.all([
-      r1.json(),
-      r2.json(),
-      r3.json(),
-    ]);
+      if (up.error) {
+        alert(`アップロード失敗：${up.error.message}`);
+        return;
+      }
 
-    if (j1?.error || j2?.error || j3?.error) {
-      throw new Error(
-        j1?.error || j2?.error || j3?.error || '生成に失敗しました'
-      );
+      const pInsta = `Instagram向け：約200文字。最後に3〜6個のハッシュタグ。`;
+      const pFb = `Facebook向け：ストーリー重視で約700文字。改行。最後に3〜6個のハッシュタグ。`;
+      const pX = `X向け：150文字程度で簡潔に。最後に2〜4個のハッシュタグ。`;
+
+      const payload = (prompt: string) => ({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+          filePath: path, // ← ここだけ渡す
+        }),
+      });
+
+      const [r1, r2, r3] = await Promise.all([
+        fetch('/api/vision', payload(pInsta)),
+        fetch('/api/vision', payload(pFb)),
+        fetch('/api/vision', payload(pX)),
+      ]);
+
+      const [j1, j2, j3] = await Promise.all([
+        r1.json(),
+        r2.json(),
+        r3.json(),
+      ]);
+
+      if (j1?.error || j2?.error || j3?.error) {
+        throw new Error(
+          j1?.error || j2?.error || j3?.error || '生成に失敗しました'
+        );
+      }
+
+      setInstaText(j1.text || '');
+      setFbText(j2.text || '');
+      setXText(j3.text || '');
+
+      alert('SNS向け文章を生成しました');
+    } catch (e: any) {
+      console.error(e);
+      alert(`エラー: ${e.message}`);
+    } finally {
+      setIsGenerating(false);
     }
-
-    setInstaText(j1.text || '');
-    setFbText(j2.text || '');
-    setXText(j3.text || '');
-
-    alert('SNS向け文章を生成しました');
-  } catch (e: any) {
-    console.error(e);
-    alert(`エラー: ${e.message}`);
-  } finally {
-    setIsGenerating(false);
-  }
-};
-
+  };
 
   // ===== チャット =====
   const sendChat = async () => {
@@ -303,6 +384,9 @@ const generateFromImage = async () => {
 
   return (
     <main style={pageStyle}>
+      {/* 🔔 無料トライアルの残り日数バナー */}
+      <TrialBanner profile={profile} />
+
       <h2 style={{ fontSize: 20, fontWeight: 800, marginBottom: 12, color: colors.ink }}>
         ユーザーページ
       </h2>
