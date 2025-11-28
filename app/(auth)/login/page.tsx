@@ -150,9 +150,12 @@ export default function AuthPage() {
     <main style={pageStyle}>
       <div style={cardStyle}>
         <div style={{ marginBottom: 12 }}>
-          <h1 style={titleStyle}>
-            SNS投稿サポートツール
-          </h1>
+        <h1 style={titleStyle}>
+  auto post studio
+</h1>
+<p style={{ fontSize: 11, color: '#6b7280', textAlign: 'center', marginTop: 2 }}>
+  SNS投稿サポートツール
+</p>
           <p style={subTitleStyle}>
             {isLogin
               ? 'メールアドレスとアカウントIDでログインしてください。'
