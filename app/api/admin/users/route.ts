@@ -44,7 +44,9 @@ export async function GET() {
       );
     }
 
-    const rows = (data ?? []) as ProfileRow[];
+// Supabaseの戻り値をいったん unknown にしてから ProfileRow[] として扱う
+const rows = (data ?? []) as unknown as ProfileRow[];
+
 
     return NextResponse.json({ users: rows });
   } catch (err) {
