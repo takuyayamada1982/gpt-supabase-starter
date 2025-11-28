@@ -226,12 +226,29 @@ export default function LoginPage() {
               }}
             >
               <button
-                type="button"
-                style={modeToggleBtn(mode === 'login')}
-                onClick={() => setMode('login')}
-              >
-                ログイン
-              </button>
+  type="submit"
+  style={{
+    width: '100%',
+    maxWidth: 360,
+    display: 'block',
+    margin: '12px auto 0',
+    padding: '12px 16px',
+    borderRadius: 999,
+    border: 'none',
+    background:
+      'linear-gradient(135deg, rgba(59,130,246,1), rgba(96,165,250,1))',
+    color: '#FFFFFF',
+    fontWeight: 700,
+    fontSize: 14,           // ← スマホでも大きすぎない
+    letterSpacing: '0.08em',
+    textAlign: 'center',
+    whiteSpace: 'nowrap',   // ← ここで「縦にバラバラ」を防ぐ
+    boxShadow: '0 8px 18px rgba(37,99,235,0.35)',
+  }}
+>
+  ログインして始める
+</button>
+
               <button
                 type="button"
                 style={modeToggleBtn(mode === 'signup')}
