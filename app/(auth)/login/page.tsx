@@ -1,237 +1,123 @@
-// app/(auth)/login/page.tsx
 'use client';
 
-import { FormEvent, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { useRouter } from 'next/navigation';
 
-type Mode = 'login' | 'signup';
-
-export default function LoginPage() {
+export default function AuthPage() {
   const router = useRouter();
-  const [mode, setMode] = useState<Mode>('login');
+
+  // mode: login or register
+  const [mode, setMode] = useState<'login' | 'register'>('login');
 
   const [email, setEmail] = useState('');
+  const [accountId, setAccountId] = useState(''); // ログイン時だけ使用
   const [password, setPassword] = useState('');
-  const [accountId, setAccountId] = useState(''); // ★ アカウントID（5桁）
-
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
 
-  const handleSubmit = async (e: FormEvent) => {
+  const isLogin = mode === 'login';
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setMessage(null);
-
     if (!email || !password) {
-      setMessage('メールアドレスとパスワードを入力してください。');
+      alert('メールアドレスとパスワードを入力してください');
+      return;
+    }
+    if (isLogin && !accountId) {
+      alert('アカウントIDを入力してください');
       return;
     }
 
-    // ※ 今は機能を変えない前提なので、accountId は「入力だけ」してもらう状態
-    //   （ログイン判定にはまだ使っていません）
-
+    setLoading(true);
     try {
-      setLoading(true);
-
-      if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (error) throw error;
-
-        setMessage('登録用メールを送信しました。メールを確認してログインしてください。');
-        setMode('login');
-      } else {
+      if (isLogin) {
+        // ログイン
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
         });
-        if (error) throw error;
-        if (!data.user) throw new Error('ログインに失敗しました。');
 
+        if (error) throw error;
+
+        // ここで accountId チェックを入れたい場合は、profiles を読んで一致確認してもOK
+        // ひとまずログイン成功後は /u へ遷移
         router.push('/u');
+      } else {
+        // 新規登録（アカウントIDはここでは聞かない）
+        const { data, error } = await supabase.auth.signUp({
+          email,
+          password,
+        });
+        if (error) throw error;
+
+        alert('登録用メールを送信しました。メール内のリンクから認証を完了してください。');
       }
     } catch (err: any) {
-      setMessage(err.message ?? 'エラーが発生しました。');
+      alert(err.message || 'エラーが発生しました');
     } finally {
       setLoading(false);
     }
   };
 
-  // ====== スタイル定義（インライン） ======
+  // ===== スタイル =====
   const pageStyle: React.CSSProperties = {
     minHeight: '100vh',
-    margin: 0,
-    padding: 0,
     display: 'flex',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
+    padding: '16px',
     background:
-      'radial-gradient(circle at top left, #3B82F6 0, #1D4ED8 40%, #0F172A 100%)',
-    fontFamily:
-      '-apple-system, BlinkMacSystemFont, system-ui, -system-ui, sans-serif',
+      'radial-gradient(circle at top left, #1d4ed8 0, #0f172a 40%, #020617 100%)',
+    boxSizing: 'border-box',
   };
 
   const cardStyle: React.CSSProperties = {
-    width: 'min(960px, 100% - 32px)',
-    minHeight: 420,
-    borderRadius: 24,
-    background: '#FFFFFF',
-    display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 1fr)',
-    boxShadow: '0 18px 60px rgba(15,23,42,0.35)',
-    overflow: 'hidden',
-  };
-
-  const leftStyle: React.CSSProperties = {
-    position: 'relative',
-    padding: '40px 36px',
-    background:
-      'radial-gradient(circle at 0% 0%, #60A5FA 0, #1D4ED8 40%, #0F172A 100%)',
-    color: '#EFF6FF',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
-  };
-
-  const rightStyle: React.CSSProperties = {
-    padding: '36px 32px',
-    display: 'flex',
-    flexDirection: 'column',
-    justifyContent: 'center',
+    width: '100%',
+    maxWidth: 420,
+    background: 'rgba(255,255,255,0.96)',
+    borderRadius: 18,
+    padding: 20,
+    boxShadow: '0 18px 45px rgba(15,23,42,0.45)',
+    boxSizing: 'border-box',
   };
 
   const titleStyle: React.CSSProperties = {
-    fontSize: 28,
+    fontSize: 20,
     fontWeight: 800,
-    marginBottom: 8,
-  };
-
-  const subtitleStyle: React.CSSProperties = {
-    fontSize: 14,
-    opacity: 0.9,
-    lineHeight: 1.7,
-    maxWidth: 320,
-  };
-
-  const inputLabel: React.CSSProperties = {
-    fontSize: 12,
-    color: '#6B7280',
     marginBottom: 4,
+    color: '#0f172a',
+    textAlign: 'center',
+  };
+
+  const subTitleStyle: React.CSSProperties = {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 16,
+    textAlign: 'center',
+  };
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 12,
+    color: '#4b5563',
+    marginBottom: 4,
+    display: 'block',
   };
 
   const inputStyle: React.CSSProperties = {
     width: '100%',
-    borderRadius: 10,
-    border: '1px solid #D1D5DB',
-    padding: '10px 12px',
-    fontSize: 14,
-    outline: 'none',
-    boxSizing: 'border-box',
-  };
-
-  const primaryBtn: React.CSSProperties = {
-    width: '100%',
-    padding: '10px 14px',
     borderRadius: 999,
-    border: 'none',
-    background: '#1D4ED8',
-    color: '#FFFFFF',
-    fontWeight: 600,
-    fontSize: 14,
-    cursor: 'pointer',
-  };
-
-  const secondaryBtn: React.CSSProperties = {
-    width: '100%',
+    border: '1px solid #e5e7eb',
     padding: '10px 14px',
-    borderRadius: 999,
-    border: '1px solid #E5E7EB',
-    background: '#FFFFFF',
-    color: '#111827',
-    fontWeight: 600,
     fontSize: 13,
-    cursor: 'pointer',
+    boxSizing: 'border-box',
+    backgroundColor: '#ffffff',
   };
 
-  const modeToggleBtn = (active: boolean): React.CSSProperties => ({
-    flex: 1,
-    padding: '6px 10px',
-    borderRadius: 999,
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: 12,
-    fontWeight: 600,
-    background: active ? '#1D4ED8' : 'transparent',
-    color: active ? '#EFF6FF' : '#6B7280',
-  });
-
-  return (
-    <main style={pageStyle}>
-      <div style={cardStyle}>
-        {/* 左側：Welcome エリア */}
-        <section style={leftStyle}>
-          <div style={{ marginBottom: 40 }}>
-            <div
-              style={{
-                fontSize: 12,
-                letterSpacing: 2,
-                textTransform: 'uppercase',
-                opacity: 0.8,
-                marginBottom: 6,
-              }}
-            >
-              WELCOME
-            </div>
-            <h1 style={titleStyle}>SNS 投稿サポートツール</h1>
-            <p style={subtitleStyle}>
-              URL や写真から、Instagram / Facebook / X 向けの文章をまとめて生成できます。
-              ログインして、日々の SNS 投稿をもっと楽にしていきましょう。
-            </p>
-          </div>
-          <div style={{ fontSize: 11, opacity: 0.8 }}>
-            ※ この画面で入力された情報は Supabase の認証機能で安全に扱われます。
-          </div>
-        </section>
-
-        {/* 右側：ログインフォーム */}
-        <section style={rightStyle}>
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              marginBottom: 16,
-              alignItems: 'center',
-            }}
-          >
-            <div>
-              <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 4 }}>
-                {mode === 'login' ? 'Sign in' : 'Create account'}
-              </div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: '#111827' }}>
-                {mode === 'login'
-                  ? 'ログインしてはじめる'
-                  : 'アカウントを新規作成'}
-              </div>
-            </div>
-
-            <div
-              style={{
-                background: '#F3F4F6',
-                borderRadius: 999,
-                padding: 3,
-                display: 'flex',
-                gap: 2,
-              }}
-            >
-              <button
-  type="submit"
-  style={{
+  const mainButtonStyle: React.CSSProperties = {
     width: '100%',
     maxWidth: 360,
     display: 'block',
-    margin: '12px auto 0',
+    margin: '16px auto 8px',
     padding: '12px 16px',
     borderRadius: 999,
     border: 'none',
@@ -239,126 +125,162 @@ export default function LoginPage() {
       'linear-gradient(135deg, rgba(59,130,246,1), rgba(96,165,250,1))',
     color: '#FFFFFF',
     fontWeight: 700,
-    fontSize: 14,           // ← スマホでも大きすぎない
+    fontSize: 14,
     letterSpacing: '0.08em',
-    textAlign: 'center',
-    whiteSpace: 'nowrap',   // ← ここで「縦にバラバラ」を防ぐ
+    textAlign: 'center' as const,
+    whiteSpace: 'nowrap' as const, // スマホで縦にバラけないように
     boxShadow: '0 8px 18px rgba(37,99,235,0.35)',
-  }}
->
-  ログインして始める
-</button>
+  };
 
-              <button
-                type="button"
-                style={modeToggleBtn(mode === 'signup')}
-                onClick={() => setMode('signup')}
-              >
-                新規登録
-              </button>
-            </div>
-          </div>
+  const switchAreaStyle: React.CSSProperties = {
+    marginTop: 4,
+    fontSize: 11,
+    textAlign: 'center',
+    color: '#6b7280',
+  };
 
-          <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 12 }}>
-            {/* メールアドレス */}
-            <div style={{ display: 'grid', gap: 4 }}>
-              <label style={inputLabel}>メールアドレス</label>
-              <input
-                style={inputStyle}
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                autoComplete="email"
-              />
-            </div>
+  const switchLinkStyle: React.CSSProperties = {
+    color: '#2563eb',
+    fontWeight: 600,
+    cursor: 'pointer',
+    borderBottom: '1px dashed rgba(37,99,235,0.4)',
+  };
 
-            {/* アカウントID（5桁） */}
-            <div style={{ display: 'grid', gap: 4 }}>
-              <label style={inputLabel}>
-                アカウントID（5桁の数字）※任意／今後の管理用
-              </label>
-              <input
-                style={inputStyle}
-                type="text"
-                maxLength={5}
-                value={accountId}
-                onChange={(e) =>
-                  setAccountId(e.target.value.replace(/[^0-9]/g, ''))
-                }
-                placeholder="例：12345"
-              />
-            </div>
+  return (
+    <main style={pageStyle}>
+      <div style={cardStyle}>
+        <div style={{ marginBottom: 12 }}>
+          <h1 style={titleStyle}>
+            SNS投稿サポートツール
+          </h1>
+          <p style={subTitleStyle}>
+            {isLogin
+              ? 'メールアドレスとアカウントIDでログインしてください。'
+              : '最初にメールアドレスとパスワードだけ登録します。アカウントIDは後から管理者が付与します。'}
+          </p>
+        </div>
 
-            {/* パスワード */}
-            <div style={{ display: 'grid', gap: 4 }}>
-              <label style={inputLabel}>パスワード</label>
-              <input
-                style={inputStyle}
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="8文字以上を推奨"
-                autoComplete={
-                  mode === 'login' ? 'current-password' : 'new-password'
-                }
-              />
-            </div>
-
-            {/* メッセージ表示 */}
-            {message && (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: '#B91C1C',
-                  background: '#FEF2F2',
-                  borderRadius: 10,
-                  padding: '8px 10px',
-                  marginTop: 4,
-                }}
-              >
-                {message}
-              </div>
-            )}
-
-            {/* ボタン */}
-            <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
-              <button type="submit" style={primaryBtn} disabled={loading}>
-                {loading
-                  ? '処理中...'
-                  : mode === 'login'
-                  ? 'ログインする'
-                  : '新規登録する'}
-              </button>
-
-              <button
-                type="button"
-                style={secondaryBtn}
-                onClick={() => {
-                  setEmail('');
-                  setPassword('');
-                  setAccountId('');
-                  setMessage(null);
-                }}
-              >
-                入力内容をクリア
-              </button>
-            </div>
-          </form>
-
-          <div
+        {/* ログイン / 新規登録 タブ（小さめ） */}
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'center',
+            gap: 8,
+            marginBottom: 12,
+            fontSize: 11,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setMode('login')}
             style={{
-              marginTop: 16,
-              fontSize: 11,
-              color: '#6B7280',
-              lineHeight: 1.6,
+              padding: '6px 12px',
+              borderRadius: 999,
+              border: 'none',
+              backgroundColor: isLogin ? '#111827' : 'transparent',
+              color: isLogin ? '#f9fafb' : '#6b7280',
+              fontWeight: isLogin ? 700 : 500,
+              cursor: 'pointer',
             }}
           >
-            ・ログイン後は「ユーザーページ /u」から URL 要約・画像説明・チャット機能をご利用いただけます。
-            <br />
-            ・アカウントIDは将来の管理機能（/admin）で利用予定です。
+            ログイン
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('register')}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 999,
+              border: 'none',
+              backgroundColor: !isLogin ? '#111827' : 'transparent',
+              color: !isLogin ? '#f9fafb' : '#6b7280',
+              fontWeight: !isLogin ? 700 : 500,
+              cursor: 'pointer',
+            }}
+          >
+            新規登録
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'grid', gap: 10 }}>
+          {/* メールアドレス */}
+          <div>
+            <label style={labelStyle}>メールアドレス</label>
+            <input
+              type="email"
+              style={inputStyle}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              autoComplete="email"
+            />
           </div>
-        </section>
+
+          {/* アカウントID（ログイン時のみ表示） */}
+          {isLogin && (
+            <div>
+              <label style={labelStyle}>アカウントID（5桁）</label>
+              <input
+                type="text"
+                style={inputStyle}
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                placeholder="例: 12345"
+                maxLength={5}
+                inputMode="numeric"
+              />
+            </div>
+          )}
+
+          {/* パスワード */}
+          <div>
+            <label style={labelStyle}>パスワード</label>
+            <input
+              type="password"
+              style={inputStyle}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="8文字以上のパスワード"
+              autoComplete={isLogin ? 'current-password' : 'new-password'}
+            />
+          </div>
+
+          {/* メインボタン */}
+          <button type="submit" style={mainButtonStyle} disabled={loading}>
+            {loading
+              ? isLogin
+                ? 'ログイン処理中…'
+                : '登録処理中…'
+              : 'ログインして始める'}
+          </button>
+
+          {/* ログイン / 新規登録の切替（←ここを「ボタンの下」に置いた） */}
+          <div style={switchAreaStyle}>
+            {isLogin ? (
+              <>
+                初めてご利用の方は{' '}
+                <span
+                  style={switchLinkStyle}
+                  onClick={() => setMode('register')}
+                >
+                  新規登録
+                </span>
+                へ
+              </>
+            ) : (
+              <>
+                すでにアカウントをお持ちの方は{' '}
+                <span
+                  style={switchLinkStyle}
+                  onClick={() => setMode('login')}
+                >
+                  ログイン
+                </span>
+                へ
+              </>
+            )}
+          </div>
+        </form>
       </div>
     </main>
   );
