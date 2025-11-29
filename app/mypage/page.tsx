@@ -212,7 +212,7 @@ export default function MyPage() {
 
           <button
             onClick={handleCancel}
-            disabled={loading || profile?.is_canceled}
+           disabled={loading || !!profile?.is_canceled}
             style={{
               padding: '10px 18px',
               borderRadius: '999px',
