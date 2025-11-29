@@ -146,21 +146,18 @@ export default function AuthPage() {
         >
           Auto post studio ログイン
         </h1>
-
-        {/* ★追加文言 */}
-        <p
-          style={{
-            textAlign: 'center',
-            fontSize: '14px',
-            lineHeight: 1.7,
-            color: '#4b5563',
-            marginBottom: '14px',
-            whiteSpace: 'pre-line',
-          }}
-        >
-          URL要約・画像説明生成・Chat補助をまとめてこなす、
-          SNS投稿サポートツールです。
-        </p>
+<p
+  style={{
+    textAlign: 'center',
+    fontSize: '14px',
+    lineHeight: 1.7,
+    color: '#4b5563',
+    marginBottom: '18px',
+  }}
+>
+  SNS投稿の準備を、もっとシンプルに。<br />
+  URL要約・画像説明・文章補助をまとめて行えるSNS補助ツールです。
+</p>
 
         {/* ★切替ガイド文（下に移動しないようマージン調整） */}
         <p
@@ -372,7 +369,7 @@ export default function AuthPage() {
             }}
           >
             ※ ログイン時のみアカウントIDを使用します。<br />
-            ※ アカウントIDは管理画面（admin）から後から付与できます。
+            ※ アカウントIDは契約後お支払い完了後に払い出しされます。
           </p>
         </div>
 
