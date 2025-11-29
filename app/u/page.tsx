@@ -123,24 +123,63 @@ export default function UPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [chatLoading, setChatLoading] = useState(false);
 
-  useEffect(() => {
+   useEffect(() => {
     (async () => {
+      // ログインしていない場合は /auth へ
       const { data } = await supabase.auth.getUser();
       const user = data.user;
-      if (!user) return;
+      if (!user) {
+        router.push('/auth');
+        return;
+      }
 
       setUserId(user.id);
 
-      // プロファイル（トライアル情報）取得
+      // プロファイル取得（トライアル + 解約情報も含める）
       const { data: p } = await (supabase as any)
         .from('profiles')
-        .select('registered_at, trial_type, plan_status')
+        .select(
+          'registered_at, trial_type, plan_status, is_canceled, plan_valid_until'
+        )
         .eq('id', user.id)
         .single();
 
-      if (p) setProfile(p);
+      if (!p) {
+        // profile が無いのはおかしいのでログアウトさせる
+        await supabase.auth.signOut();
+        router.push('/auth');
+        return;
+      }
+
+      setProfile(p);
+
+      // ===== 解約済みユーザーのガード =====
+      if (p.is_canceled) {
+        // 有効期限が入っていない解約 → すぐ利用不可
+        if (!p.plan_valid_until) {
+          alert('ご契約はすでに終了しているため、サービスをご利用いただけません。');
+          await supabase.auth.signOut();
+          router.push('/auth');
+          return;
+        }
+
+        const now = new Date();
+        const end = new Date(String(p.plan_valid_until));
+        const diffMs = end.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+        // B案仕様：残日数が 0 日以下なら利用不可
+        if (diffDays <= 0) {
+          alert('ご契約の有効期限が終了しているため、サービスをご利用いただけません。');
+          await supabase.auth.signOut();
+          router.push('/auth');
+          return;
+        }
+        // diffDays > 0 のときは「解約済みだが残日数あり」→ 利用OK
+      }
     })();
-  }, []);
+  }, [router]);
+
 
   // ===== テーマ（色など） =====
   const colors = {
