@@ -1,5 +1,12 @@
 // app/layout.tsx
-export const metadata = { title: 'Auto post studio' };
+import type { Metadata } from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'Auto post studio',
+  description:
+    'URL要約・画像説明生成・チャット補助で、SNS投稿を効率化するサポートツール。',
+};
 
 export default function RootLayout({
   children,
@@ -8,10 +15,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja">
-      <body className="min-h-screen bg-gray-50 text-gray-900">
-        {/* 共通ヘッダーをなくして、各ページ側で好きにレイアウト */}
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }
