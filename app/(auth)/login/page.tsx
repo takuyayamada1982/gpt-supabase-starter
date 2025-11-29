@@ -234,18 +234,142 @@ export default function AuthPage() {
     }
   };
 
-  return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: '#f3f4f6',
-        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-        padding: '16px',
-      }}
-    >
+ return (
+  <main style={loginStyles.page}>
+    <section style={loginStyles.card}>
+      
+      <h1 style={loginStyles.title}>
+        Auto post studio ログイン
+      </h1>
+
+      <p style={loginStyles.subtitle}>
+        {isLogin
+          ? '登録済みの方はメール・パスワード・アカウントIDを入力してください。'
+          : '初めての方はメールアドレスとパスワードを設定してください。'}
+      </p>
+
+      {/* モード切り替えタブ */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '4px',
+          padding: '4px',
+          backgroundColor: '#f3f4f6',
+          borderRadius: '999px',
+          marginBottom: '20px',
+        }}
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setMode('login');
+            resetState();
+          }}
+          style={{
+            flex: 1,
+            padding: '8px 0',
+            borderRadius: '999px',
+            border: 'none',
+            fontSize: '13px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            backgroundColor: isLogin ? '#111827' : 'transparent',
+            color: isLogin ? '#ffffff' : '#4b5563',
+          }}
+        >
+          ログイン
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            setMode('register');
+            resetState();
+          }}
+          style={{
+            flex: 1,
+            padding: '8px 0',
+            borderRadius: '999px',
+            border: 'none',
+            fontSize: '13px',
+            fontWeight: 600,
+            cursor: 'pointer',
+            backgroundColor: !isLogin ? '#111827' : 'transparent',
+            color: !isLogin ? '#ffffff' : '#4b5563',
+          }}
+        >
+          新規登録
+        </button>
+      </div>
+
+      <form
+        onSubmit={handleSubmit}
+        style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
+      >
+        <div>
+          <label style={loginStyles.label}>メールアドレス</label>
+          <input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            style={loginStyles.input}
+            required
+          />
+        </div>
+
+        <div>
+          <label style={loginStyles.label}>パスワード</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={loginStyles.input}
+            required
+          />
+        </div>
+
+        {isLogin && (
+          <div>
+            <label style={loginStyles.label}>アカウントID（5桁）</label>
+            <input
+              type="text"
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              maxLength={5}
+              style={loginStyles.input}
+              required
+            />
+          </div>
+        )}
+
+        {errorMsg && (
+          <p style={{ fontSize: '12px', color: '#b91c1c' }}>
+            {errorMsg}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          style={{
+            ...loginStyles.button,
+            opacity: loading ? 0.6 : 1,
+            cursor: loading ? 'not-allowed' : 'pointer',
+          }}
+        >
+          {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
+        </button>
+      </form>
+
+      <p style={loginStyles.footnote}>
+        ※ ログイン時のみアカウントIDを使用します。
+        <br />
+        ※ アカウントIDは管理画面（admin）から後から付与・変更できます。
+      </p>
+    </section>
+  </main>
+);
+
       <section
         style={{
           width: '100%',
