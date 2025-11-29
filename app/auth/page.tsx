@@ -126,35 +126,49 @@ export default function AuthPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#f3f4f6',
+        padding: '24px',
         fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-        padding: '16px',
+        // ★ 水彩パステル背景
+        background:
+          'radial-gradient(circle at 10% 20%, #ffb8d9 0, transparent 55%),' +
+          'radial-gradient(circle at 80% 25%, #b7e4ff 0, transparent 55%),' +
+          'radial-gradient(circle at 30% 80%, #c8ffc4 0, transparent 55%),' +
+          '#ffffff',
       }}
     >
       <section
         style={{
           width: '100%',
-          maxWidth: '420px',
-          backgroundColor: '#ffffff',
-          borderRadius: '16px',
-          boxShadow: '0 12px 30px rgba(0,0,0,0.08)',
-          padding: '24px 20px 28px',
+          maxWidth: '460px',
+          // ★ うっすら透けた白＋枠線＋影
+          backgroundColor: 'rgba(255,255,255,0.96)',
+          borderRadius: '20px',
+          padding: '48px 40px 42px',
+          border: '1.6px solid rgba(140,140,140,0.28)',
+          boxShadow:
+            '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
         }}
       >
         <h1
           style={{
-            fontSize: '22px',
-            fontWeight: 700,
-            marginBottom: '4px',
+            fontSize: '26px',
+            fontWeight: 600,
+            textAlign: 'center',
+            letterSpacing: '0.02em',
+            marginBottom: '16px',
+            color: '#333',
           }}
         >
           Auto post studio ログイン
         </h1>
         <p
           style={{
-            fontSize: '13px',
+            textAlign: 'center',
+            fontSize: '14px',
+            lineHeight: 1.75,
             color: '#6b7280',
-            marginBottom: '20px',
+            marginBottom: '28px',
+            opacity: 0.9,
           }}
         >
           {isLogin
@@ -215,8 +229,18 @@ export default function AuthPage() {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <label style={{ fontSize: '13px', fontWeight: 500 }}>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
+        >
+          <label
+            style={{
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#444',
+              display: 'block',
+            }}
+          >
             メールアドレス
             <input
               type="email"
@@ -224,17 +248,27 @@ export default function AuthPage() {
               onChange={(e) => setEmail(e.target.value)}
               style={{
                 width: '100%',
-                marginTop: '4px',
-                padding: '8px 10px',
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb',
-                fontSize: '13px',
+                marginTop: '6px',
+                padding: '12px 15px',
+                borderRadius: '10px',
+                border: '1px solid #d2d2d2',
+                fontSize: '15px',
+                backgroundColor: '#ffffff',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+                outline: 'none',
               }}
               required
             />
           </label>
 
-          <label style={{ fontSize: '13px', fontWeight: 500 }}>
+          <label
+            style={{
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#444',
+              display: 'block',
+            }}
+          >
             パスワード
             <input
               type="password"
@@ -242,18 +276,28 @@ export default function AuthPage() {
               onChange={(e) => setPassword(e.target.value)}
               style={{
                 width: '100%',
-                marginTop: '4px',
-                padding: '8px 10px',
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb',
-                fontSize: '13px',
+                marginTop: '6px',
+                padding: '12px 15px',
+                borderRadius: '10px',
+                border: '1px solid #d2d2d2',
+                fontSize: '15px',
+                backgroundColor: '#ffffff',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+                outline: 'none',
               }}
               required
             />
           </label>
 
           {isLogin && (
-            <label style={{ fontSize: '13px', fontWeight: 500 }}>
+            <label
+              style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: '#444',
+                display: 'block',
+              }}
+            >
               アカウントID（5桁）
               <input
                 type="text"
@@ -262,11 +306,14 @@ export default function AuthPage() {
                 maxLength={5}
                 style={{
                   width: '100%',
-                  marginTop: '4px',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
-                  fontSize: '13px',
+                  marginTop: '6px',
+                  padding: '12px 15px',
+                  borderRadius: '10px',
+                  border: '1px solid #d2d2d2',
+                  fontSize: '15px',
+                  backgroundColor: '#ffffff',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+                  outline: 'none',
                 }}
                 required
               />
@@ -289,16 +336,20 @@ export default function AuthPage() {
             type="submit"
             disabled={loading}
             style={{
-              marginTop: '8px',
+              marginTop: '10px',
               width: '100%',
-              padding: '10px',
+              padding: '14px',
               borderRadius: '999px',
               border: 'none',
-              backgroundColor: loading ? '#6b7280' : '#111827',
-              color: '#ffffff',
-              fontSize: '14px',
-              fontWeight: 600,
+              fontSize: '16px',
+              fontWeight: 700,
+              // ★ パステルグラデのボタン
+              background:
+                'linear-gradient(120deg, #bfe0ff, #ffd6f5)',
+              color: '#333',
               cursor: loading ? 'not-allowed' : 'pointer',
+              boxShadow: '0 10px 28px rgba(150,150,150,0.28)',
+              opacity: loading ? 0.6 : 1,
             }}
           >
             {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
@@ -307,10 +358,11 @@ export default function AuthPage() {
 
         <p
           style={{
-            marginTop: '14px',
-            fontSize: '11px',
+            marginTop: '18px',
+            fontSize: '12px',
             color: '#9ca3af',
-            lineHeight: 1.5,
+            lineHeight: 1.7,
+            textAlign: 'center',
           }}
         >
           ※ ログイン時のみアカウントIDを使用します。<br />
