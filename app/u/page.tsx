@@ -82,12 +82,16 @@ export default function UserDashboard() {
     [logs]
   );
 
-  const maxCount = useMemo(() => {
-    return Object.values(totalsByType).reduce(
-      (max, value) => (value && value > max ? value : max),
-      0
+    const maxCount = useMemo(() => {
+    const values = Object.values(totalsByType).filter(
+      (v): v is number => typeof v === 'number'
     );
+
+    if (values.length === 0) return 0;
+
+    return Math.max(...values);
   }, [totalsByType]);
+
 
   const summarizeType = (type: UsageType) => {
     switch (type) {
