@@ -37,48 +37,76 @@ export default function AuthPage() {
 
     setLoading(true);
     try {
-      if (isLogin) {
-        // -------------------------
-        // ① ログイン処理
-        // -------------------------
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+     if (isLogin) {
+  // -------------------------
+  // ① ログイン処理
+  // -------------------------
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-        if (error || !data.user) {
-          setErrorMsg('メールアドレスまたはパスワードが正しくありません。');
-          return;
-        }
+  if (error || !data.user) {
+    setErrorMsg('メールアドレスまたはパスワードが正しくありません。');
+    return;
+  }
 
-        const user = data.user;
+  const user = data.user;
 
-        // ② profiles からアカウントIDが一致するか確認
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .eq('account_id', accountId)
-          .maybeSingle();
+  // ② profiles 取得（解約情報も含める）
+  const { data: profile, error: profileError } = await supabase
+    .from('profiles')
+    .select('account_id, is_canceled, plan_valid_until')
+    .eq('id', user.id)
+    .maybeSingle();
 
-        if (profileError) {
-          console.error(profileError);
-          setErrorMsg('プロフィールの確認中にエラーが発生しました。');
-          // 安全のためサインアウト
-          await supabase.auth.signOut();
-          return;
-        }
+  if (profileError || !profile) {
+    await supabase.auth.signOut();
+    setErrorMsg('プロフィール情報の取得に失敗しました。');
+    return;
+  }
 
-        if (!profile) {
-          // アカウントID不一致 → サインアウトして弾く
-          await supabase.auth.signOut();
-          setErrorMsg('アカウントIDが登録情報と一致しません。');
-          return;
-        }
+  // ③ アカウントID確認
+  if (profile.account_id !== accountId) {
+    await supabase.auth.signOut();
+    setErrorMsg('アカウントIDが登録情報と一致しません。');
+    return;
+  }
 
-        // ③ OKならマイページへ
-        router.push('/u');
-      } else {
+  // -------------------------
+  // ④ 解約済み（is_canceled = true）なら有効期限チェック
+  // -------------------------
+  if (profile.is_canceled) {
+    if (!profile.plan_valid_until) {
+      // 有効期限が無い → 即ログイン不可
+      await supabase.auth.signOut();
+      setErrorMsg('ご契約はすでに終了しています。ログインできません。');
+      return;
+    }
+
+    const now = new Date();
+    const end = new Date(profile.plan_valid_until);
+    const diffMs = end.getTime() - now.getTime();
+    const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays <= 0) {
+      // 有効期限切れ → ログイン不可
+      await supabase.auth.signOut();
+      setErrorMsg('ご契約の有効期限が終了しているため、ログインできません。');
+      return;
+    }
+
+    // 有効期限が残っている場合はログインOK
+    // → 何もしない
+  }
+
+  // -------------------------
+  // ⑤ すべてOK → サービスページへ
+  // -------------------------
+  router.push('/u');
+  return;
+}
+ else {
         // -------------------------
         // ② 新規登録処理
         // -------------------------
