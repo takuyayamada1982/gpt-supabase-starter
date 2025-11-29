@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-// ▼ ここからスタイル定義を追加 ▼
 
+type Mode = 'login' | 'register';
+
+// ▼ デザイン用スタイル（背景＋カード＋メリハリ）▼
 const loginStyles = {
   page: {
     minHeight: '100vh',
@@ -94,10 +96,7 @@ const loginStyles = {
     lineHeight: 1.6,
   },
 };
-
-// ▲ ここまで追加 ▲
-
-type Mode = 'login' | 'register';
+// ▲ ここまでスタイル ▲
 
 export default function AuthPage() {
   const router = useRouter();
@@ -169,7 +168,6 @@ export default function AuthPage() {
         // ④ 解約済みの場合のみ、有効期限をチェック
         if (profile.is_canceled) {
           if (!profile.plan_valid_until) {
-            // 解約済みで期限が入っていない → すでに利用不可扱い
             await supabase.auth.signOut();
             setErrorMsg('ご契約はすでに終了しています。ログインできません。');
             return;
@@ -178,7 +176,6 @@ export default function AuthPage() {
           const now = new Date();
           const end = new Date(profile.plan_valid_until);
 
-          // diffDays <= 0 なら「今日を含めて期限切れ」とみなす
           const diffMs = end.getTime() - now.getTime();
           const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
@@ -187,10 +184,6 @@ export default function AuthPage() {
             setErrorMsg('ご契約の有効期限が終了しているため、ログインできません。');
             return;
           }
-
-          // diffDays > 0 の場合：
-          // 「解約済みだが残日数がある」→ ログインは許可
-          // （マイページ側で「残り◯日利用可能です」と案内）
         }
 
         // ⑤ ここまで来たらログインOK → サービスページへ
@@ -216,14 +209,12 @@ export default function AuthPage() {
         const { error: insertError } = await supabase.from('profiles').insert({
           id: user.id,
           email: user.email,
-          // account_id は null のまま。後で admin 画面から設定。
         });
 
         if (insertError) {
           console.warn('profiles insert error (無視可能):', insertError.message);
         }
 
-        // 登録成功 → サービスページへ
         router.push('/u');
       }
     } catch (err) {
@@ -234,168 +225,15 @@ export default function AuthPage() {
     }
   };
 
- return (
-  <main style={loginStyles.page}>
-    <section style={loginStyles.card}>
-      
-      <h1 style={loginStyles.title}>
-        Auto post studio ログイン
-      </h1>
-
-      <p style={loginStyles.subtitle}>
-        {isLogin
-          ? '登録済みの方はメール・パスワード・アカウントIDを入力してください。'
-          : '初めての方はメールアドレスとパスワードを設定してください。'}
-      </p>
-
-      {/* モード切り替えタブ */}
-      <div
-        style={{
-          display: 'flex',
-          gap: '4px',
-          padding: '4px',
-          backgroundColor: '#f3f4f6',
-          borderRadius: '999px',
-          marginBottom: '20px',
-        }}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            setMode('login');
-            resetState();
-          }}
-          style={{
-            flex: 1,
-            padding: '8px 0',
-            borderRadius: '999px',
-            border: 'none',
-            fontSize: '13px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            backgroundColor: isLogin ? '#111827' : 'transparent',
-            color: isLogin ? '#ffffff' : '#4b5563',
-          }}
-        >
-          ログイン
-        </button>
-
-        <button
-          type="button"
-          onClick={() => {
-            setMode('register');
-            resetState();
-          }}
-          style={{
-            flex: 1,
-            padding: '8px 0',
-            borderRadius: '999px',
-            border: 'none',
-            fontSize: '13px',
-            fontWeight: 600,
-            cursor: 'pointer',
-            backgroundColor: !isLogin ? '#111827' : 'transparent',
-            color: !isLogin ? '#ffffff' : '#4b5563',
-          }}
-        >
-          新規登録
-        </button>
-      </div>
-
-      <form
-        onSubmit={handleSubmit}
-        style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
-      >
-        <div>
-          <label style={loginStyles.label}>メールアドレス</label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={loginStyles.input}
-            required
-          />
-        </div>
-
-        <div>
-          <label style={loginStyles.label}>パスワード</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={loginStyles.input}
-            required
-          />
-        </div>
-
-        {isLogin && (
-          <div>
-            <label style={loginStyles.label}>アカウントID（5桁）</label>
-            <input
-              type="text"
-              value={accountId}
-              onChange={(e) => setAccountId(e.target.value)}
-              maxLength={5}
-              style={loginStyles.input}
-              required
-            />
-          </div>
-        )}
-
-        {errorMsg && (
-          <p style={{ fontSize: '12px', color: '#b91c1c' }}>
-            {errorMsg}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading}
-          style={{
-            ...loginStyles.button,
-            opacity: loading ? 0.6 : 1,
-            cursor: loading ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
-        </button>
-      </form>
-
-      <p style={loginStyles.footnote}>
-        ※ ログイン時のみアカウントIDを使用します。
-        <br />
-        ※ アカウントIDは管理画面（admin）から後から付与・変更できます。
-      </p>
-    </section>
-  </main>
-);
-
-      <section
-        style={{
-          width: '100%',
-          maxWidth: '420px',
-          backgroundColor: '#ffffff',
-          borderRadius: '16px',
-          boxShadow: '0 12px 30px rgba(0,0,0,0.08)',
-          padding: '24px 20px 28px',
-        }}
-      >
-        <h1
-          style={{
-            fontSize: '22px',
-            fontWeight: 700,
-            marginBottom: '4px',
-          }}
-        >
+  // ★ あなたが貼ってくれた return ブロックは「ここ」に入ります
+  return (
+    <main style={loginStyles.page}>
+      <section style={loginStyles.card}>
+        <h1 style={loginStyles.title}>
           Auto post studio ログイン
         </h1>
-        <p
-          style={{
-            fontSize: '13px',
-            color: '#6b7280',
-            marginBottom: '20px',
-          }}
-        >
+
+        <p style={loginStyles.subtitle}>
           {isLogin
             ? '登録済みの方はメール・パスワード・アカウントIDを入力してください。'
             : '初めての方はメールアドレスとパスワードを設定してください。'}
@@ -432,6 +270,7 @@ export default function AuthPage() {
           >
             ログイン
           </button>
+
           <button
             type="button"
             onClick={() => {
@@ -456,73 +295,46 @@ export default function AuthPage() {
 
         <form
           onSubmit={handleSubmit}
-          style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+          style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
         >
-          <label style={{ fontSize: '13px', fontWeight: 500 }}>
-            メールアドレス
+          <div>
+            <label style={loginStyles.label}>メールアドレス</label>
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              style={{
-                width: '100%',
-                marginTop: '4px',
-                padding: '8px 10px',
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb',
-                fontSize: '13px',
-              }}
+              style={loginStyles.input}
               required
             />
-          </label>
+          </div>
 
-          <label style={{ fontSize: '13px', fontWeight: 500 }}>
-            パスワード
+          <div>
+            <label style={loginStyles.label}>パスワード</label>
             <input
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: '100%',
-                marginTop: '4px',
-                padding: '8px 10px',
-                borderRadius: '8px',
-                border: '1px solid #e5e7eb',
-                fontSize: '13px',
-              }}
+              style={loginStyles.input}
               required
             />
-          </label>
+          </div>
 
           {isLogin && (
-            <label style={{ fontSize: '13px', fontWeight: 500 }}>
-              アカウントID（5桁）
+            <div>
+              <label style={loginStyles.label}>アカウントID（5桁）</label>
               <input
                 type="text"
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
                 maxLength={5}
-                style={{
-                  width: '100%',
-                  marginTop: '4px',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
-                  fontSize: '13px',
-                }}
+                style={loginStyles.input}
                 required
               />
-            </label>
+            </div>
           )}
 
           {errorMsg && (
-            <p
-              style={{
-                marginTop: '4px',
-                fontSize: '12px',
-                color: '#b91c1c',
-              }}
-            >
+            <p style={{ fontSize: '12px', color: '#b91c1c' }}>
               {errorMsg}
             </p>
           )}
@@ -531,30 +343,16 @@ export default function AuthPage() {
             type="submit"
             disabled={loading}
             style={{
-              marginTop: '8px',
-              width: '100%',
-              padding: '10px',
-              borderRadius: '999px',
-              border: 'none',
-              backgroundColor: loading ? '#6b7280' : '#111827',
-              color: '#ffffff',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: loading ? 'not-allowed' : 'pointer',
-            }}
+            ...loginStyles.button,
+            opacity: loading ? 0.6 : 1,
+            cursor: loading ? 'not-allowed' : 'pointer',
+          }}
           >
             {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
           </button>
         </form>
 
-        <p
-          style={{
-            marginTop: '14px',
-            fontSize: '11px',
-            color: '#9ca3af',
-            lineHeight: 1.5,
-          }}
-        >
+        <p style={loginStyles.footnote}>
           ※ ログイン時のみアカウントIDを使用します。
           <br />
           ※ アカウントIDは管理画面（admin）から後から付与・変更できます。
