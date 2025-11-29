@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation'; 
 import { supabase } from '@/lib/supabaseClient';
 
 type Msg = { role: 'user' | 'assistant'; content: string };
@@ -88,6 +89,7 @@ function TrialBanner({ profile }: { profile: any }) {
 export default function UPage() {
   const [userId, setUserId] = useState('');
   const [profile, setProfile] = useState<any>(null);
+  const router = useRouter();
 
   // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
   const [urlInput, setUrlInput] = useState('');
@@ -397,16 +399,44 @@ export default function UPage() {
       {/* 🔔 トライアル / ご契約中バナー */}
       <TrialBanner profile={profile} />
 
-      <h2
+      {/* ヘッダー：左にタイトル、右にマイページ＆ログアウト */}
+      <div
         style={{
-          fontSize: 20,
-          fontWeight: 800,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
           marginBottom: 12,
-          color: colors.ink,
         }}
       >
-        ユーザーページ
-      </h2>
+        <h2
+          style={{
+            fontSize: 20,
+            fontWeight: 800,
+            color: colors.ink,
+          }}
+        >
+          ユーザーページ
+        </h2>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            style={btnGhost}
+            onClick={() => router.push('/mypage')}
+          >
+            マイページ
+          </button>
+
+          <button
+            style={btnGhost}
+            onClick={async () => {
+              await supabase.auth.signOut();
+              router.push('/auth');
+            }}
+          >
+            ログアウト
+          </button>
+        </div>
+      </div>
 
       {/* ===== ① URL → 生成（上段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
