@@ -3,6 +3,99 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+// ▼ ここからスタイル定義を追加 ▼
+
+const loginStyles = {
+  page: {
+    minHeight: '100vh',
+    margin: 0,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '16px',
+    fontFamily:
+      '"Helvetica Neue", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    background: `
+      radial-gradient(circle at 10% 20%, #ffb8d9 0, transparent 55%),
+      radial-gradient(circle at 80% 25%, #b7e4ff 0, transparent 55%),
+      radial-gradient(circle at 30% 80%, #c8ffc4 0, transparent 55%),
+      #ffffff
+    `,
+  },
+
+  card: {
+    width: '100%',
+    maxWidth: '460px',
+    background: 'rgba(255,255,255,0.96)',
+    padding: '48px 40px 42px',
+    borderRadius: '20px',
+    border: '1.6px solid rgba(140,140,140,0.28)',
+    boxShadow:
+      '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
+  },
+
+  title: {
+    fontSize: '26px',
+    textAlign: 'center',
+    fontWeight: 600,
+    letterSpacing: '0.02em',
+    marginBottom: '16px',
+    color: '#333',
+  },
+
+  subtitle: {
+    textAlign: 'center',
+    fontSize: '14px',
+    lineHeight: 1.75,
+    marginBottom: '28px',
+    color: '#6d6d6d',
+    opacity: 0.9,
+  },
+
+  label: {
+    fontSize: '14px',
+    fontWeight: 600,
+    marginBottom: '6px',
+    color: '#444',
+  },
+
+  input: {
+    width: '100%',
+    padding: '12px 15px',
+    borderRadius: '10px',
+    border: '1px solid #d2d2d2',
+    background: '#ffffff',
+    fontSize: '15px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
+    outline: 'none',
+    transition: 'all .15s ease',
+  },
+
+  button: {
+    marginTop: '10px',
+    width: '100%',
+    padding: '14px',
+    borderRadius: '999px',
+    background: 'linear-gradient(120deg, #bfe0ff, #ffd6f5)',
+    border: 'none',
+    fontSize: '16px',
+    fontWeight: 700,
+    color: '#333',
+    cursor: 'pointer',
+    boxShadow: '0 10px 28px rgba(150,150,150,0.28)',
+    transition: '0.12s ease',
+  },
+
+  footnote: {
+    marginTop: '22px',
+    fontSize: '12px',
+    textAlign: 'center',
+    color: '#7a7a7a',
+    lineHeight: 1.6,
+  },
+};
+
+// ▲ ここまで追加 ▲
 
 type Mode = 'login' | 'register';
 
