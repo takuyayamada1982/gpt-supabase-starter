@@ -36,6 +36,7 @@ export default function AuthPage() {
     setLoading(true);
     try {
       if (isLogin) {
+        // ログイン処理
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -48,6 +49,7 @@ export default function AuthPage() {
 
         const user = data.user;
 
+        // profiles からアカウントIDが一致するか確認
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('*')
@@ -70,6 +72,7 @@ export default function AuthPage() {
 
         router.push('/u');
       } else {
+        // 新規登録処理
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -120,53 +123,70 @@ export default function AuthPage() {
     >
       <section
         style={{
+          position: 'relative', // サインインラベル用
           width: '100%',
           maxWidth: '460px',
           backgroundColor: 'rgba(255,255,255,0.96)',
           borderRadius: '20px',
-          padding: '48px 40px 42px',
           border: '1.6px solid rgba(140,140,140,0.28)',
+          padding: '40px 36px 42px', // 左右36px
           boxShadow:
             '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
-          
-          // ★ カード高さ固定
           minHeight: '640px',
           display: 'flex',
           flexDirection: 'column',
         }}
       >
+        {/* カード内 左上のサインイン */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 16,
+            left: 36, // カードpadding左と揃える
+            fontSize: 13,
+            fontWeight: 500,
+            letterSpacing: '0.08em',
+            color: '#4b5563',
+          }}
+        >
+          サインイン
+        </div>
+
         <h1
           style={{
-            fontSize: '26px',
+            fontSize: 26,
             fontWeight: 600,
             textAlign: 'center',
-            marginBottom: '16px',
+            margin: '16px 0 16px',
             color: '#333',
           }}
         >
-          Auto post studio ログイン
+          Auto post studio
         </h1>
-<p
-  style={{
-    textAlign: 'center',
-    fontSize: '14px',
-    lineHeight: 1.7,
-    color: '#4b5563',
-    marginBottom: '18px',
-  }}
->
-  SNS投稿の準備を、もっとシンプルに。<br />
-  URL要約・画像説明・文章補助をまとめて行えるSNS補助ツールです。
-</p>
 
-        {/* ★切替ガイド文（下に移動しないようマージン調整） */}
+        {/* キャッチコピー */}
         <p
           style={{
             textAlign: 'center',
-            fontSize: '14px',
+            fontSize: 14,
+            lineHeight: 1.7,
+            color: '#4b5563',
+            marginBottom: 18,
+          }}
+        >
+          SNS投稿の準備を、もっとシンプルに。
+          <br />
+          URL要約・画像説明・文章補助をまとめて行えるSNS補助ツールです。
+        </p>
+
+        {/* ログイン / 新規登録ガイド文 */}
+        <p
+          style={{
+            textAlign: 'center',
+            fontSize: 14,
             lineHeight: 1.75,
             color: '#6b7280',
-            marginBottom: '28px',
+            marginBottom: 28,
             opacity: 0.9,
           }}
         >
@@ -175,20 +195,17 @@ export default function AuthPage() {
             : '初めての方はメールアドレスとパスワードを設定してください。'}
         </p>
 
-        {/* ▼ フェード切替ブロック ▼ */}
-        <div
-          key={isLogin ? 'login' : 'register'}
-          className="fade-wrapper"
-        >
-          {/* モード切替タブ */}
+        {/* ログイン / 新規登録 切替ブロック（フェード） */}
+        <div key={isLogin ? 'login' : 'register'} className="fade-wrapper">
+          {/* タブ */}
           <div
             style={{
               display: 'flex',
-              gap: '4px',
-              padding: '4px',
+              padding: 4,
+              gap: 4,
               backgroundColor: '#f3f4f6',
-              borderRadius: '999px',
-              marginBottom: '20px',
+              borderRadius: 999,
+              marginBottom: 22,
             }}
           >
             <button
@@ -200,9 +217,9 @@ export default function AuthPage() {
               style={{
                 flex: 1,
                 padding: '8px 0',
-                borderRadius: '999px',
+                borderRadius: 999,
                 border: 'none',
-                fontSize: '13px',
+                fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
                 backgroundColor: isLogin ? '#111827' : 'transparent',
@@ -211,7 +228,6 @@ export default function AuthPage() {
             >
               ログイン
             </button>
-
             <button
               type="button"
               onClick={() => {
@@ -221,9 +237,9 @@ export default function AuthPage() {
               style={{
                 flex: 1,
                 padding: '8px 0',
-                borderRadius: '999px',
+                borderRadius: 999,
                 border: 'none',
-                fontSize: '13px',
+                fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
                 backgroundColor: !isLogin ? '#111827' : 'transparent',
@@ -240,15 +256,16 @@ export default function AuthPage() {
             style={{
               display: 'flex',
               flexDirection: 'column',
-              gap: '18px',
+              gap: 18,
             }}
           >
             <label
               style={{
-                fontSize: '14px',
+                width: '100%',
+                display: 'block',
+                fontSize: 14,
                 fontWeight: 600,
                 color: '#444',
-                display: 'block',
               }}
             >
               メールアドレス
@@ -258,11 +275,12 @@ export default function AuthPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 style={{
                   width: '100%',
-                  marginTop: '6px',
+                  boxSizing: 'border-box',
+                  marginTop: 6,
                   padding: '12px 15px',
-                  borderRadius: '10px',
+                  borderRadius: 10,
                   border: '1px solid #d2d2d2',
-                  fontSize: '15px',
+                  fontSize: 15,
                   boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
                 }}
                 required
@@ -271,10 +289,11 @@ export default function AuthPage() {
 
             <label
               style={{
-                fontSize: '14px',
+                width: '100%',
+                display: 'block',
+                fontSize: 14,
                 fontWeight: 600,
                 color: '#444',
-                display: 'block',
               }}
             >
               パスワード
@@ -284,11 +303,12 @@ export default function AuthPage() {
                 onChange={(e) => setPassword(e.target.value)}
                 style={{
                   width: '100%',
-                  marginTop: '6px',
+                  boxSizing: 'border-box',
+                  marginTop: 6,
                   padding: '12px 15px',
-                  borderRadius: '10px',
+                  borderRadius: 10,
                   border: '1px solid #d2d2d2',
-                  fontSize: '15px',
+                  fontSize: 15,
                   boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
                 }}
                 required
@@ -298,10 +318,11 @@ export default function AuthPage() {
             {isLogin && (
               <label
                 style={{
-                  fontSize: '14px',
+                  width: '100%',
+                  display: 'block',
+                  fontSize: 14,
                   fontWeight: 600,
                   color: '#444',
-                  display: 'block',
                 }}
               >
                 アカウントID（5桁）
@@ -312,11 +333,12 @@ export default function AuthPage() {
                   maxLength={5}
                   style={{
                     width: '100%',
-                    marginTop: '6px',
+                    boxSizing: 'border-box',
+                    marginTop: 6,
                     padding: '12px 15px',
-                    borderRadius: '10px',
+                    borderRadius: 10,
                     border: '1px solid #d2d2d2',
-                    fontSize: '15px',
+                    fontSize: 15,
                     boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
                   }}
                   required
@@ -327,8 +349,8 @@ export default function AuthPage() {
             {errorMsg && (
               <p
                 style={{
-                  marginTop: '4px',
-                  fontSize: '12px',
+                  marginTop: 4,
+                  fontSize: 12,
                   color: '#b91c1c',
                 }}
               >
@@ -340,12 +362,12 @@ export default function AuthPage() {
               type="submit"
               disabled={loading}
               style={{
-                marginTop: '10px',
+                marginTop: 8,
                 width: '100%',
-                padding: '14px',
-                borderRadius: '999px',
+                padding: 14,
+                borderRadius: 999,
                 border: 'none',
-                fontSize: '16px',
+                fontSize: 16,
                 fontWeight: 700,
                 background: 'linear-gradient(120deg, #bfe0ff, #ffd6f5)',
                 color: '#333',
@@ -358,22 +380,22 @@ export default function AuthPage() {
             </button>
           </form>
 
-          {/* 注意書き */}
           <p
             style={{
-              marginTop: '18px',
-              fontSize: '12px',
-              color: '#9ca3af',
-              lineHeight: 1.7,
+              marginTop: 18,
+              fontSize: 12,
               textAlign: 'center',
+              lineHeight: 1.7,
+              color: '#9ca3af',
             }}
           >
-            ※ ログイン時のみアカウントIDを使用します。<br />
-            ※ アカウントIDは契約後お支払い完了後に払い出しされます。
+            ※ ログイン時のみアカウントIDを使用します。
+            <br />
+            ※ アカウントIDは契約後に払い出しされます。
           </p>
         </div>
 
-        {/* ▼ フェードアニメーション */}
+        {/* フェードアニメーション（ログイン⇄新規登録切り替え時） */}
         <style jsx>{`
           .fade-wrapper {
             animation: fadeInUp 0.22s ease-out;
