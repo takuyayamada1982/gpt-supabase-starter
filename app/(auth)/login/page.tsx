@@ -3,11 +3,23 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
+import type { CSSProperties } from 'react';
 
 type Mode = 'login' | 'register';
 
-// ▼ デザイン用スタイル（背景＋カード＋メリハリ）▼
-const loginStyles = {
+/* ---------------------------------------------------------
+   デザイン（背景・カード・入力・ボタン）をまとめたスタイル
+--------------------------------------------------------- */
+const loginStyles: {
+  page: CSSProperties;
+  card: CSSProperties;
+  title: CSSProperties;
+  subtitle: CSSProperties;
+  label: CSSProperties;
+  input: CSSProperties;
+  button: CSSProperties;
+  footnote: CSSProperties;
+} = {
   page: {
     minHeight: '100vh',
     margin: 0,
@@ -96,8 +108,10 @@ const loginStyles = {
     lineHeight: 1.6,
   },
 };
-// ▲ ここまでスタイル ▲
 
+/* ---------------------------------------------------------
+   AuthPage 本体
+--------------------------------------------------------- */
 export default function AuthPage() {
   const router = useRouter();
   const [mode, setMode] = useState<Mode>('login');
@@ -110,10 +124,11 @@ export default function AuthPage() {
 
   const isLogin = mode === 'login';
 
-  const resetState = () => {
-    setErrorMsg(null);
-  };
+  const resetState = () => setErrorMsg(null);
 
+  /* ------------------------------------------
+      ログイン / 新規登録 の共通処理
+  ------------------------------------------ */
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     resetState();
@@ -128,11 +143,10 @@ export default function AuthPage() {
     }
 
     setLoading(true);
+
     try {
       if (isLogin) {
-        // -------------------------
-        // ① ログイン処理
-        // -------------------------
+        /* === ▼ ログイン処理 ▼ === */
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -145,93 +159,76 @@ export default function AuthPage() {
 
         const user = data.user;
 
-        // ② profiles を取得（アカウントID＋解約情報）
-        const { data: profile, error: profileError } = await supabase
+        // profiles 取得
+        const { data: profile } = await supabase
           .from('profiles')
           .select('account_id, is_canceled, plan_valid_until')
           .eq('id', user.id)
           .maybeSingle();
 
-        if (profileError || !profile) {
+        if (!profile) {
           await supabase.auth.signOut();
           setErrorMsg('プロフィール情報の取得に失敗しました。');
           return;
         }
 
-        // ③ アカウントIDが一致するか確認
         if (profile.account_id !== accountId) {
           await supabase.auth.signOut();
           setErrorMsg('アカウントIDが登録情報と一致しません。');
           return;
         }
 
-        // ④ 解約済みの場合のみ、有効期限をチェック
         if (profile.is_canceled) {
-          if (!profile.plan_valid_until) {
-            await supabase.auth.signOut();
-            setErrorMsg('ご契約はすでに終了しています。ログインできません。');
-            return;
-          }
-
           const now = new Date();
-          const end = new Date(profile.plan_valid_until);
+          const end = new Date(profile.plan_valid_until || '');
 
-          const diffMs = end.getTime() - now.getTime();
-          const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-          if (diffDays <= 0) {
+          if (isNaN(end.getTime()) || end < now) {
             await supabase.auth.signOut();
-            setErrorMsg('ご契約の有効期限が終了しているため、ログインできません。');
+            setErrorMsg('ご契約の有効期限が終了しています。');
             return;
           }
         }
 
-        // ⑤ ここまで来たらログインOK → サービスページへ
+        /* ログイン成功 → ユーザーページ */
         router.push('/u');
       } else {
-        // -------------------------
-        // ② 新規登録処理
-        // -------------------------
+        /* === ▼ 新規登録処理 ▼ === */
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
         });
 
         if (error || !data.user) {
-          console.error(error);
           setErrorMsg('新規登録に失敗しました。すでに登録済みの可能性があります。');
           return;
         }
 
         const user = data.user;
 
-        // profiles にレコードを作成（account_id は admin が後付け）
-        const { error: insertError } = await supabase.from('profiles').insert({
+        // profiles 追加（account_idは admin が後付け）
+        await supabase.from('profiles').insert({
           id: user.id,
           email: user.email,
         });
 
-        if (insertError) {
-          console.warn('profiles insert error (無視可能):', insertError.message);
-        }
-
         router.push('/u');
       }
-    } catch (err) {
-      console.error(err);
-      setErrorMsg('予期しないエラーが発生しました。時間をおいて再度お試しください。');
+    } catch (e) {
+      console.error(e);
+      setErrorMsg('予期しないエラーが発生しました。');
     } finally {
       setLoading(false);
     }
   };
 
-  // ★ あなたが貼ってくれた return ブロックは「ここ」に入ります
+  /* ---------------------------------------------------------
+     ★ ここから画面表示 (UI)
+  --------------------------------------------------------- */
   return (
     <main style={loginStyles.page}>
       <section style={loginStyles.card}>
-        <h1 style={loginStyles.title}>
-          Auto post studio ログイン
-        </h1>
+
+        <h1 style={loginStyles.title}>Auto post studio ログイン</h1>
 
         <p style={loginStyles.subtitle}>
           {isLogin
@@ -239,7 +236,7 @@ export default function AuthPage() {
             : '初めての方はメールアドレスとパスワードを設定してください。'}
         </p>
 
-        {/* モード切り替えタブ */}
+        {/* モード切替 */}
         <div
           style={{
             display: 'flex',
@@ -265,7 +262,7 @@ export default function AuthPage() {
               fontWeight: 600,
               cursor: 'pointer',
               backgroundColor: isLogin ? '#111827' : 'transparent',
-              color: isLogin ? '#ffffff' : '#4b5563',
+              color: isLogin ? '#fff' : '#4b5563',
             }}
           >
             ログイン
@@ -286,13 +283,14 @@ export default function AuthPage() {
               fontWeight: 600,
               cursor: 'pointer',
               backgroundColor: !isLogin ? '#111827' : 'transparent',
-              color: !isLogin ? '#ffffff' : '#4b5563',
+              color: !isLogin ? '#fff' : '#4b5563',
             }}
           >
             新規登録
           </button>
         </div>
 
+        {/* 入力フォーム */}
         <form
           onSubmit={handleSubmit}
           style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}
@@ -334,19 +332,17 @@ export default function AuthPage() {
           )}
 
           {errorMsg && (
-            <p style={{ fontSize: '12px', color: '#b91c1c' }}>
-              {errorMsg}
-            </p>
+            <p style={{ fontSize: '12px', color: '#d00' }}>{errorMsg}</p>
           )}
 
           <button
             type="submit"
             disabled={loading}
             style={{
-            ...loginStyles.button,
-            opacity: loading ? 0.6 : 1,
-            cursor: loading ? 'not-allowed' : 'pointer',
-          }}
+              ...loginStyles.button,
+              opacity: loading ? 0.6 : 1,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
           >
             {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
           </button>
@@ -357,6 +353,7 @@ export default function AuthPage() {
           <br />
           ※ アカウントIDは管理画面（admin）から後から付与・変更できます。
         </p>
+
       </section>
     </main>
   );
