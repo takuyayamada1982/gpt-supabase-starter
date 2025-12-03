@@ -92,7 +92,7 @@ export default function AuthPage() {
           return;
         }
 
-        // 将来「解約済みユーザーは弾く」などもここに入れられる
+        // ここで「解約済みなら弾く」等も将来追加可能
 
         // OKならサービスページへ
         router.push('/u');
@@ -114,27 +114,35 @@ export default function AuthPage() {
         const user = data.user;
 
         // 紹介経由かどうか
-        const trialType = refCode ? 'referral' : 'normal'; // 紹介なら14日トライアルに使う
+        const trialType = refCode ? 'referral' : 'normal'; // 紹介なら14日トライアルに使う想定
         const accountIdForTrial = '99999'; // トライアル中は共通ID
         const myReferralCode = generateReferralCode(); // 自分用の紹介コード
 
-        // profiles にレコードを作成
-        const { error: insertError } = await supabase.from('profiles').insert({
-          id: user.id,
-          email: user.email,
-          account_id: accountIdForTrial,
-          trial_type: trialType,          // 'normal' or 'referral'
-          referred_by_code: refCode,      // 紹介経由でなければ null
-          referral_code: myReferralCode,  // 自分用紹介コード（紹介するときに使う）
-          registered_at: new Date().toISOString(),
-          plan_status: 'trial',           // とりあえずトライアル扱い
-        });
+        const nowIso = new Date().toISOString();
 
-        if (insertError) {
-          console.warn('profiles insert error (無視可能):', insertError.message);
+        // ★ ここを insert ではなく upsert に変更（id が同じなら上書き）
+        const { error: upsertError } = await supabase
+          .from('profiles')
+          .upsert(
+            {
+              id: user.id,
+              email: user.email,
+              account_id: accountIdForTrial,
+              trial_type: trialType,           // 'normal' or 'referral'
+              referred_by_code: refCode,       // 紹介経由でなければ null
+              referral_code: myReferralCode,   // 自分用紹介コード（紹介するときに使う）
+              registered_at: nowIso,
+              plan_status: 'trial',            // とりあえずトライアル扱い
+            },
+            { onConflict: 'id' }
+          );
+
+        if (upsertError) {
+          console.warn('profiles upsert error (ログのみ):', upsertError.message);
+          // ここで落ちてもログイン自体は成功しているので致命的にはしない
         }
 
-        // Welcome メール送信（失敗しても致命的ではない）
+        // Welcome メール送信（失敗しても画面の動作には影響させない）
         try {
           await fetch('/api/send-welcome', {
             method: 'POST',
@@ -161,9 +169,7 @@ export default function AuthPage() {
     }
   };
 
-  // -----------------------
-  // UI（カラー復活版）
-  // -----------------------
+  // UI（以前のきれいなデザイン版）
   return (
     <main
       style={{
@@ -171,8 +177,7 @@ export default function AuthPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background:
-          'radial-gradient(circle at top left, #fee2e2, transparent 55%), radial-gradient(circle at bottom right, #dbeafe, #f9fafb 60%)',
+        backgroundColor: '#f3f4f6',
         fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
         padding: '16px',
       }}
@@ -182,48 +187,33 @@ export default function AuthPage() {
           width: '100%',
           maxWidth: '420px',
           backgroundColor: '#ffffff',
-          borderRadius: '24px',
-          boxShadow: '0 18px 45px rgba(15,23,42,0.25)',
-          padding: '24px 22px 28px',
-          border: '1px solid rgba(148,163,184,0.35)',
+          borderRadius: '16px',
+          boxShadow: '0 12px 30px rgba(0,0,0,0.08)',
+          padding: '24px 20px 28px',
         }}
       >
-        <header style={{ marginBottom: '18px' }}>
-          <p
-            style={{
-              fontSize: '11px',
-              fontWeight: 600,
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase',
-              color: '#6b7280',
-              marginBottom: '4px',
-            }}
-          >
-            Auto post studio
-          </p>
-          <h1
-            style={{
-              fontSize: '22px',
-              fontWeight: 800,
-              marginBottom: '6px',
-              color: '#111827',
-            }}
-          >
-            SNS投稿の下準備を、もっとシンプルに。
-          </h1>
-          <p
-            style={{
-              fontSize: '13px',
-              color: '#6b7280',
-              lineHeight: 1.6,
-            }}
-          >
-            URL要約・画像説明生成・Chat補助をまとめてこなす、
-            SNS投稿サポートツールです。
-          </p>
-        </header>
+        <h1
+          style={{
+            fontSize: '22px',
+            fontWeight: 700,
+            marginBottom: '4px',
+          }}
+        >
+          Auto post studio ログイン
+        </h1>
+        <p
+          style={{
+            fontSize: '13px',
+            color: '#6b7280',
+            marginBottom: '20px',
+          }}
+        >
+          {isLogin
+            ? '登録済みの方はメール・パスワード・アカウントIDを入力してください。'
+            : '初めての方はメールアドレスとパスワードを設定してください。'}
+        </p>
 
-        {/* 紹介経由の時だけバッジ表示 */}
+        {/* 紹介経由の時だけ、軽く表示しておく（任意） */}
         {!isLogin && refCode && (
           <div
             style={{
@@ -231,31 +221,12 @@ export default function AuthPage() {
               fontSize: '12px',
               color: '#065f46',
               backgroundColor: '#ecfdf3',
-              borderRadius: '10px',
+              borderRadius: '8px',
               padding: '8px 10px',
               border: '1px solid #bbf7d0',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
             }}
           >
-            <span
-              style={{
-                display: 'inline-flex',
-                width: 18,
-                height: 18,
-                borderRadius: '999px',
-                backgroundColor: '#22c55e',
-                color: '#ecfdf3',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '11px',
-                fontWeight: 700,
-              }}
-            >
-              %
-            </span>
-            <span>紹介コード経由のご登録です。無料期間が通常より長くなります。</span>
+            紹介コード経由でのご登録です。無料期間は通常より長くなります。
           </div>
         )}
 
@@ -267,7 +238,7 @@ export default function AuthPage() {
             padding: '4px',
             backgroundColor: '#f3f4f6',
             borderRadius: '999px',
-            marginBottom: '18px',
+            marginBottom: '20px',
           }}
         >
           <button
@@ -286,7 +257,6 @@ export default function AuthPage() {
               cursor: 'pointer',
               backgroundColor: isLogin ? '#111827' : 'transparent',
               color: isLogin ? '#ffffff' : '#4b5563',
-              transition: 'background-color 0.18s ease, color 0.18s ease',
             }}
           >
             ログイン
@@ -307,7 +277,6 @@ export default function AuthPage() {
               cursor: 'pointer',
               backgroundColor: !isLogin ? '#111827' : 'transparent',
               color: !isLogin ? '#ffffff' : '#4b5563',
-              transition: 'background-color 0.18s ease, color 0.18s ease',
             }}
           >
             新規登録
@@ -327,11 +296,10 @@ export default function AuthPage() {
               style={{
                 width: '100%',
                 marginTop: '4px',
-                padding: '9px 11px',
-                borderRadius: '10px',
-                border: '1px solid #e5e7eb',
+                padding: '8px 10px',
+                borderRadius: '8px',
+                border: '1px solid '#e5e7eb',
                 fontSize: '13px',
-                outline: 'none',
               }}
               required
             />
@@ -346,11 +314,10 @@ export default function AuthPage() {
               style={{
                 width: '100%',
                 marginTop: '4px',
-                padding: '9px 11px',
-                borderRadius: '10px',
-                border: '1px solid #e5e7eb',
+                padding: '8px 10px',
+                borderRadius: '8px',
+                border: '1px solid '#e5e7eb',
                 fontSize: '13px',
-                outline: 'none',
               }}
               required
             />
@@ -367,11 +334,10 @@ export default function AuthPage() {
                 style={{
                   width: '100%',
                   marginTop: '4px',
-                  padding: '9px 11px',
-                  borderRadius: '10px',
+                  padding: '8px 10px',
+                  borderRadius: '8px',
                   border: '1px solid #e5e7eb',
                   fontSize: '13px',
-                  outline: 'none',
                 }}
                 required
               />
@@ -399,15 +365,11 @@ export default function AuthPage() {
               padding: '10px',
               borderRadius: '999px',
               border: 'none',
-              background:
-                loading
-                  ? '#6b7280'
-                  : 'linear-gradient(135deg, #111827, #020617)',
+              backgroundColor: loading ? '#6b7280' : '#111827',
               color: '#ffffff',
               fontSize: '14px',
               fontWeight: 600,
               cursor: loading ? 'not-allowed' : 'pointer',
-              boxShadow: '0 10px 22px rgba(15,23,42,0.35)',
             }}
           >
             {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
