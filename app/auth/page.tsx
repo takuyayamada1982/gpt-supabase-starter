@@ -1,9 +1,9 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { getAccessState, ProfileRow } from '@/lib/accessControl';
+import { getAccessState, type ProfileRow } from '@/lib/accessControl';
 
 type Mode = 'login' | 'register';
 
@@ -389,51 +389,3 @@ export default function AuthPage() {
                   padding: '9px 11px',
                   fontSize: '13px',
                   outline: 'none',
-                  boxSizing: 'border-box',
-                }}
-              />
-            </div>
-          )}
-
-          {/* 補足テキスト */}
-          <p
-            style={{
-              fontSize: '11px',
-              color: '#9ca3af',
-              marginBottom: '10px',
-            }}
-          >
-            トライアル期間中のアカウントIDは
-            <span style={{ fontWeight: 600 }}>「99999」</span>
-            です。
-          </p>
-
-          {/* ボタン */}
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              marginTop: '4px',
-              width: '100%',
-              borderRadius: '999px',
-              border: 'none',
-              padding: '10px 0',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              background:
-                'linear-gradient(135deg, #0f172a, #1f2937)',
-              color: '#f9fafb',
-            }}
-          >
-            {loading
-              ? '処理中...'
-              : isLogin
-              ? 'ログイン'
-              : '新規登録してはじめる'}
-          </button>
-        </form>
-      </div>
-    </main>
-  );
-}
