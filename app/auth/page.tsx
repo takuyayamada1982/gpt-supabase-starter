@@ -43,6 +43,8 @@ export default function AuthPage() {
         // ============================
         // ログイン処理
         // ============================
+        const normalizedAccountId = accountId.trim();
+
         const { data: authData, error: authError } =
           await supabase.auth.signInWithPassword({
             email,
@@ -56,15 +58,25 @@ export default function AuthPage() {
 
         const user = authData.user;
 
-        // profiles 取得（account_id も一致させる）
+        // profiles を id だけで取得
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('*')
           .eq('id', user.id)
-          .eq('account_id', accountId)
           .maybeSingle<ProfileRow>();
 
         if (profileError || !profile) {
+          await supabase.auth.signOut();
+          setErrorMessage('ユーザー情報の取得に失敗しました。');
+          return;
+        }
+
+        // account_id を文字列化して比較（DB側が数値でもOKにする）
+        const storedAccountId = profile.account_id
+          ? String(profile.account_id)
+          : '';
+
+        if (storedAccountId !== normalizedAccountId) {
           await supabase.auth.signOut();
           setErrorMessage('アカウントIDが登録情報と一致しません。');
           return;
@@ -175,8 +187,9 @@ export default function AuthPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        // より鮮やかなグラデーション背景
         background:
-          'radial-gradient(circle at top left, #e0f2fe 0, transparent 45%), radial-gradient(circle at bottom right, #fee2e2 0, transparent 50%), #f3f4f6',
+          'linear-gradient(135deg, #ffb7c5 0%, #d8f4d8 35%, #b8e2ff 100%)',
         padding: '24px',
       }}
     >
