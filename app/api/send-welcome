@@ -1,0 +1,32 @@
+// app/api/send-welcome/route.ts
+import { NextResponse } from 'next/server';
+import { Resend } from 'resend';
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+
+export async function POST(request: Request) {
+  try {
+    const { email, accountId, password } = await request.json();
+
+    const { data, error } = await resend.emails.send({
+      from: 'AutoPost Studio <onboarding@resend.dev>',  // ← 認証不要で送れる
+      to: email,
+      subject: 'AutoPost Studio｜ご登録ありがとうございます',
+      html: `
+        <p>ご登録ありがとうございます！</p>
+        <p>以下があなたのアカウント情報です：</p>
+        <ul>
+          <li>ログインメール：${email}</li>
+          <li>アカウントID：<b>${accountId}</b></li>
+          <li>パスワード（控え）：${password}</li>
+        </ul>
+        <p>ログインはこちら：<br>
+          <a href="https://gpt-supabase-starter.vercel.app/auth">
+            https://gpt-supabase-starter.vercel.app/auth
+          </a>
+        </p>
+      `,
+    });
+
+    if (error) {
+      console.er
