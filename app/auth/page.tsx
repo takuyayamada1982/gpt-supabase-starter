@@ -1,10 +1,15 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
 type Mode = 'login' | 'register';
+
+// 自分用の紹介コードを適当に6文字生成
+function generateReferralCode() {
+  return Math.random().toString(36).slice(2, 8);
+}
 
 export default function AuthPage() {
   const router = useRouter();
@@ -16,9 +21,22 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // 紹介コード（/auth?ref=xxxx の xxxx 部分）
+  const [refCode, setRefCode] = useState<string | null>(null);
+
   const isLogin = mode === 'login';
 
-  const resetState = () => setErrorMsg(null);
+  // URL のクエリから ?ref= を取得
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const search = new URLSearchParams(window.location.search);
+    const r = search.get('ref');
+    if (r) setRefCode(r);
+  }, []);
+
+  const resetState = () => {
+    setErrorMsg(null);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +54,9 @@ export default function AuthPage() {
     setLoading(true);
     try {
       if (isLogin) {
-        // ログイン処理
+        // -------------------------
+        // ① ログイン処理（元の仕様を維持）
+        // -------------------------
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -60,19 +80,26 @@ export default function AuthPage() {
         if (profileError) {
           console.error(profileError);
           setErrorMsg('プロフィールの確認中にエラーが発生しました。');
+          // 安全のためサインアウト
           await supabase.auth.signOut();
           return;
         }
 
         if (!profile) {
+          // アカウントID不一致 → サインアウトして弾く
           await supabase.auth.signOut();
           setErrorMsg('アカウントIDが登録情報と一致しません。');
           return;
         }
 
+        // ここで将来「解約済みユーザーは弾く」なども挿し込み可能
+
+        // OKならサービスページへ
         router.push('/u');
       } else {
-        // 新規登録処理
+        // -------------------------
+        // ② 新規登録処理（紹介＆トライアル対応）
+        // -------------------------
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
@@ -86,15 +113,45 @@ export default function AuthPage() {
 
         const user = data.user;
 
+        // 紹介経由かどうか
+        const trialType = refCode ? 'referral' : 'normal'; // 紹介なら14日トライアルに使う
+        const accountIdForTrial = '99999'; // トライアル中は共通ID
+        const myReferralCode = generateReferralCode(); // 自分用の紹介コード
+
+        // profiles にレコードを作成
         const { error: insertError } = await supabase.from('profiles').insert({
           id: user.id,
           email: user.email,
+          account_id: accountIdForTrial,
+          trial_type: trialType,          // 'normal' or 'referral'
+          referred_by_code: refCode,      // 紹介経由でなければ null
+          referral_code: myReferralCode,  // 自分用紹介コード（紹介するときに使う）
+          registered_at: new Date().toISOString(),
+          plan_status: 'trial',           // とりあえずトライアル扱い
         });
 
         if (insertError) {
-          console.warn('profiles insert error:', insertError.message);
+          // ここで落ちた場合もログイン自体は成功しているので、致命的にはしない
+          console.warn('profiles insert error (無視可能):', insertError.message);
         }
 
+        // Welcome メール送信（まだルートが無ければ失敗しても無視）
+        try {
+          await fetch('/api/send-welcome', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: user.email,
+              accountId: accountIdForTrial,
+              trialType,
+              referralCode: myReferralCode,
+            }),
+          });
+        } catch (err) {
+          console.error('send-welcome failed:', err);
+        }
+
+        // 登録成功 → サービスページへ
         router.push('/u');
       }
     } catch (err) {
@@ -109,85 +166,38 @@ export default function AuthPage() {
     <main
       style={{
         minHeight: '100vh',
-        padding: '24px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: '#f3f4f6',
         fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-        background:
-          'radial-gradient(circle at 10% 20%, #ffb8d9 0, transparent 55%),' +
-          'radial-gradient(circle at 80% 25%, #b7e4ff 0, transparent 55%),' +
-          'radial-gradient(circle at 30% 80%, #c8ffc4 0, transparent 55%),' +
-          '#ffffff',
+        padding: '16px',
       }}
     >
       <section
         style={{
-          position: 'relative', // サインインラベル用
           width: '100%',
-          maxWidth: '460px',
-          backgroundColor: 'rgba(255,255,255,0.96)',
-          borderRadius: '20px',
-          border: '1.6px solid rgba(140,140,140,0.28)',
-          padding: '40px 36px 42px', // 左右36px
-          boxShadow:
-            '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
-          minHeight: '640px',
-          display: 'flex',
-          flexDirection: 'column',
+          maxWidth: '420px',
+          backgroundColor: '#ffffff',
+          borderRadius: '16px',
+          boxShadow: '0 12px 30px rgba(0,0,0,0.08)',
+          padding: '24px 20px 28px',
         }}
       >
-        {/* カード内 左上のサインイン */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 16,
-            left: 36, // カードpadding左と揃える
-            fontSize: 13,
-            fontWeight: 500,
-            letterSpacing: '0.08em',
-            color: '#4b5563',
-          }}
-        >
-          サインイン
-        </div>
-
         <h1
           style={{
-            fontSize: 26,
-            fontWeight: 600,
-            textAlign: 'center',
-            margin: '16px 0 16px',
-            color: '#333',
+            fontSize: '22px',
+            fontWeight: 700,
+            marginBottom: '4px',
           }}
         >
-          Auto post studio
+          Auto post studio ログイン
         </h1>
-
-        {/* キャッチコピー */}
         <p
           style={{
-            textAlign: 'center',
-            fontSize: 14,
-            lineHeight: 1.7,
-            color: '#4b5563',
-            marginBottom: 18,
-          }}
-        >
-          SNS投稿の準備を、もっとシンプルに。
-          <br />
-          URL要約・画像説明・文章補助をまとめて行えるSNS補助ツールです。
-        </p>
-
-        {/* ログイン / 新規登録ガイド文 */}
-        <p
-          style={{
-            textAlign: 'center',
-            fontSize: 14,
-            lineHeight: 1.75,
+            fontSize: '13px',
             color: '#6b7280',
-            marginBottom: 28,
-            opacity: 0.9,
+            marginBottom: '20px',
           }}
         >
           {isLogin
@@ -195,222 +205,181 @@ export default function AuthPage() {
             : '初めての方はメールアドレスとパスワードを設定してください。'}
         </p>
 
-        {/* ログイン / 新規登録 切替ブロック（フェード） */}
-        <div key={isLogin ? 'login' : 'register'} className="fade-wrapper">
-          {/* タブ */}
+        {/* 紹介経由の時だけ、軽く表示しておく（任意） */}
+        {!isLogin && refCode && (
           <div
             style={{
-              display: 'flex',
-              padding: 4,
-              gap: 4,
-              backgroundColor: '#f3f4f6',
-              borderRadius: 999,
-              marginBottom: 22,
+              marginBottom: '12px',
+              fontSize: '12px',
+              color: '#065f46',
+              backgroundColor: '#ecfdf3',
+              borderRadius: '8px',
+              padding: '8px 10px',
+              border: '1px solid #bbf7d0',
             }}
           >
-            <button
-              type="button"
-              onClick={() => {
-                setMode('login');
-                resetState();
-              }}
-              style={{
-                flex: 1,
-                padding: '8px 0',
-                borderRadius: 999,
-                border: 'none',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: isLogin ? '#111827' : 'transparent',
-                color: isLogin ? '#ffffff' : '#4b5563',
-              }}
-            >
-              ログイン
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setMode('register');
-                resetState();
-              }}
-              style={{
-                flex: 1,
-                padding: '8px 0',
-                borderRadius: 999,
-                border: 'none',
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                backgroundColor: !isLogin ? '#111827' : 'transparent',
-                color: !isLogin ? '#ffffff' : '#4b5563',
-              }}
-            >
-              新規登録
-            </button>
+            紹介コード経由でのご登録です。無料期間は通常より長くなります。
           </div>
+        )}
 
-          {/* フォーム */}
-          <form
-            onSubmit={handleSubmit}
+        {/* モード切り替えタブ */}
+        <div
+          style={{
+            display: 'flex',
+            gap: '4px',
+            padding: '4px',
+            backgroundColor: '#f3f4f6',
+            borderRadius: '999px',
+            marginBottom: '20px',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setMode('login');
+              resetState();
+            }}
             style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 18,
+              flex: 1,
+              padding: '8px 0',
+              borderRadius: '999px',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              backgroundColor: isLogin ? '#111827' : 'transparent',
+              color: isLogin ? '#ffffff' : '#4b5563',
             }}
           >
-            <label
-              style={{
-                width: '100%',
-                display: 'block',
-                fontSize: 14,
-                fontWeight: 600,
-                color: '#444',
-              }}
-            >
-              メールアドレス
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  marginTop: 6,
-                  padding: '12px 15px',
-                  borderRadius: 10,
-                  border: '1px solid #d2d2d2',
-                  fontSize: 15,
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-                }}
-                required
-              />
-            </label>
-
-            <label
-              style={{
-                width: '100%',
-                display: 'block',
-                fontSize: 14,
-                fontWeight: 600,
-                color: '#444',
-              }}
-            >
-              パスワード
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  marginTop: 6,
-                  padding: '12px 15px',
-                  borderRadius: 10,
-                  border: '1px solid #d2d2d2',
-                  fontSize: 15,
-                  boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-                }}
-                required
-              />
-            </label>
-
-            {isLogin && (
-              <label
-                style={{
-                  width: '100%',
-                  display: 'block',
-                  fontSize: 14,
-                  fontWeight: 600,
-                  color: '#444',
-                }}
-              >
-                アカウントID（5桁）
-                <input
-                  type="text"
-                  value={accountId}
-                  onChange={(e) => setAccountId(e.target.value)}
-                  maxLength={5}
-                  style={{
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    marginTop: 6,
-                    padding: '12px 15px',
-                    borderRadius: 10,
-                    border: '1px solid #d2d2d2',
-                    fontSize: 15,
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.07)',
-                  }}
-                  required
-                />
-              </label>
-            )}
-
-            {errorMsg && (
-              <p
-                style={{
-                  marginTop: 4,
-                  fontSize: 12,
-                  color: '#b91c1c',
-                }}
-              >
-                {errorMsg}
-              </p>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                marginTop: 8,
-                width: '100%',
-                padding: 14,
-                borderRadius: 999,
-                border: 'none',
-                fontSize: 16,
-                fontWeight: 700,
-                background: 'linear-gradient(120deg, #bfe0ff, #ffd6f5)',
-                color: '#333',
-                cursor: loading ? 'not-allowed' : 'pointer',
-                boxShadow: '0 10px 28px rgba(150,150,150,0.28)',
-                opacity: loading ? 0.6 : 1,
-              }}
-            >
-              {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
-            </button>
-          </form>
-
-          <p
+            ログイン
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('register');
+              resetState();
+            }}
             style={{
-              marginTop: 18,
-              fontSize: 12,
-              textAlign: 'center',
-              lineHeight: 1.7,
-              color: '#9ca3af',
+              flex: 1,
+              padding: '8px 0',
+              borderRadius: '999px',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              backgroundColor: !isLogin ? '#111827' : 'transparent',
+              color: !isLogin ? '#ffffff' : '#4b5563',
             }}
           >
-            ※ ログイン時のみアカウントIDを使用します。
-            <br />
-            ※ アカウントIDは契約後に払い出しされます。
-          </p>
+            新規登録
+          </button>
         </div>
 
-        {/* フェードアニメーション（ログイン⇄新規登録切り替え時） */}
-        <style jsx>{`
-          .fade-wrapper {
-            animation: fadeInUp 0.22s ease-out;
-          }
-          @keyframes fadeInUp {
-            from {
-              opacity: 0;
-              transform: translateY(6px);
-            }
-            to {
-              opacity: 1;
-              transform: translateY(0);
-            }
-          }
-        `}</style>
+        <form
+          onSubmit={handleSubmit}
+          style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
+        >
+          <label style={{ fontSize: '13px', fontWeight: 500 }}>
+            メールアドレス
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={{
+                width: '100%',
+                marginTop: '4px',
+                padding: '8px 10px',
+                borderRadius: '8px',
+                border: '1px solid #e5e7eb',
+                fontSize: '13px',
+              }}
+              required
+            />
+          </label>
+
+          <label style={{ fontSize: '13px', fontWeight: 500 }}>
+            パスワード
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              style={{
+                width: '100%',
+                marginTop: '4px',
+                padding: '8px 10px',
+                borderRadius: '8px',
+                border: '1px solid #e5e7eb',
+                fontSize: '13px',
+              }}
+              required
+            />
+          </label>
+
+          {isLogin && (
+            <label style={{ fontSize: '13px', fontWeight: 500 }}>
+              アカウントID（5桁）
+              <input
+                type="text"
+                value={accountId}
+                onChange={(e) => setAccountId(e.target.value)}
+                maxLength={5}
+                style={{
+                  width: '100%',
+                  marginTop: '4px',
+                  padding: '8px 10px',
+                  borderRadius: '8px',
+                  border: '1px solid #e5e7eb',
+                  fontSize: '13px',
+                }}
+                required
+              />
+            </label>
+          )}
+
+          {errorMsg && (
+            <p
+              style={{
+                marginTop: '4px',
+                fontSize: '12px',
+                color: '#b91c1c',
+              }}
+            >
+              {errorMsg}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            style={{
+              marginTop: '8px',
+              width: '100%',
+              padding: '10px',
+              borderRadius: '999px',
+              border: 'none',
+              backgroundColor: loading ? '#6b7280' : '#111827',
+              color: '#ffffff',
+              fontSize: '14px',
+              fontWeight: 600,
+              cursor: loading ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
+          </button>
+        </form>
+
+        <p
+          style={{
+            marginTop: '14px',
+            fontSize: '11px',
+            color: '#9ca3af',
+            lineHeight: 1.5,
+          }}
+        >
+          ※ ログイン時のみアカウントIDを使用します。
+          <br />
+          ※ アカウントIDは管理画面（admin）から後から付与・変更できます。
+        </p>
       </section>
     </main>
   );
