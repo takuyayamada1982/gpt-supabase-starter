@@ -120,7 +120,7 @@ export default function AuthPage() {
 
         const nowIso = new Date().toISOString();
 
-        // ★ ここを insert ではなく upsert に変更（id が同じなら上書き）
+        // ★ insert ではなく upsert（id が同じなら上書き）
         const { error: upsertError } = await supabase
           .from('profiles')
           .upsert(
@@ -130,19 +130,18 @@ export default function AuthPage() {
               account_id: accountIdForTrial,
               trial_type: trialType,           // 'normal' or 'referral'
               referred_by_code: refCode,       // 紹介経由でなければ null
-              referral_code: myReferralCode,   // 自分用紹介コード（紹介するときに使う）
+              referral_code: myReferralCode,   // 自分用紹介コード
               registered_at: nowIso,
-              plan_status: 'trial',            // とりあえずトライアル扱い
+              plan_status: 'trial',            // トライアル扱い
             },
             { onConflict: 'id' }
           );
 
         if (upsertError) {
           console.warn('profiles upsert error (ログのみ):', upsertError.message);
-          // ここで落ちてもログイン自体は成功しているので致命的にはしない
         }
 
-        // Welcome メール送信（失敗しても画面の動作には影響させない）
+        // Welcome メール送信（失敗しても画面動作には影響させない）
         try {
           await fetch('/api/send-welcome', {
             method: 'POST',
@@ -213,7 +212,7 @@ export default function AuthPage() {
             : '初めての方はメールアドレスとパスワードを設定してください。'}
         </p>
 
-        {/* 紹介経由の時だけ、軽く表示しておく（任意） */}
+        {/* 紹介経由の時だけ表示 */}
         {!isLogin && refCode && (
           <div
             style={{
@@ -336,7 +335,7 @@ export default function AuthPage() {
                   marginTop: '4px',
                   padding: '8px 10px',
                   borderRadius: '8px',
-                  border: '1px solid #e5e7eb',
+                  border: '1px solid '#e5e7eb',
                   fontSize: '13px',
                 }}
                 required
