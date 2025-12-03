@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type FormEvent } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { getAccessState, type ProfileRow } from '@/lib/accessControl';
 
@@ -13,7 +13,6 @@ const generateReferralCode = () => {
 
 export default function AuthPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
   const [mode, setMode] = useState<Mode>('login');
   const [email, setEmail] = useState('');
@@ -85,6 +84,14 @@ export default function AuthPage() {
         // ============================
         // 新規登録処理
         // ============================
+
+        // ?ref=XXXX を window.location から取得
+        let refCode: string | null = null;
+        if (typeof window !== 'undefined') {
+          const params = new URLSearchParams(window.location.search);
+          refCode = params.get('ref');
+        }
+
         const { data: signUpData, error: signUpError } =
           await supabase.auth.signUp({
             email,
@@ -98,8 +105,6 @@ export default function AuthPage() {
 
         const user = signUpData.user;
 
-        // ?ref=XXXX 取得
-        const refCode = searchParams.get('ref');
         const trialType: ProfileRow['trial_type'] =
           refCode ? 'referral' : 'normal';
 
