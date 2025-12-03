@@ -58,12 +58,16 @@ export default function AuthPage() {
 
         const user = authData.user;
 
-        // profiles を id だけで取得
-        const { data: profile, error: profileError } = await supabase
+        // profiles を email で取得（id のズレに影響されないようにする）
+        const { data: profiles, error: profileError } = await supabase
           .from('profiles')
           .select('*')
-          .eq('id', user.id)
-          .maybeSingle<ProfileRow>();
+          .eq('email', user.email)
+          .limit(1);
+
+        const profile = profiles && profiles.length > 0
+          ? (profiles[0] as ProfileRow)
+          : null;
 
         if (profileError || !profile) {
           await supabase.auth.signOut();
@@ -71,7 +75,7 @@ export default function AuthPage() {
           return;
         }
 
-        // account_id を文字列化して比較（DB側が数値でもOKにする）
+        // account_id を文字列化して比較（DB が数値型でも OK）
         const storedAccountId = profile.account_id
           ? String(profile.account_id)
           : '';
@@ -82,7 +86,7 @@ export default function AuthPage() {
           return;
         }
 
-        // アクセス可能か判定
+        // アクセス可能か判定（トライアル終了 / 解約など）
         const access = getAccessState(profile);
         if (!access.isActive) {
           await supabase.auth.signOut();
@@ -187,7 +191,7 @@ export default function AuthPage() {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        // より鮮やかなグラデーション背景
+        // 鮮やかなグラデーション背景
         background:
           'linear-gradient(135deg, #ffb7c5 0%, #d8f4d8 35%, #b8e2ff 100%)',
         padding: '24px',
