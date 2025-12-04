@@ -1,4 +1,3 @@
-// app/u/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -91,7 +90,6 @@ export default function UPage() {
   const router = useRouter();
 
   const [userId, setUserId] = useState('');
-  const [userEmail, setUserEmail] = useState('');
   const [profile, setProfile] = useState<any>(null);
 
   // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
@@ -110,21 +108,17 @@ export default function UPage() {
   const stancePrompts = {
     self:
       'あなたは投稿者本人です。自分が作成したSNS記事を紹介する立場で、要約とSNS投稿文を作成してください。主語は「私」「当方」でも自然に。過度な自画自賛は避けつつ、背景やねらい、見どころを簡潔に添えてください。',
-  others:
+    others:
       'あなたは第三者として、他人のSNS記事を自分のフォロワーに紹介します。著者へのリスペクトを示し、出典・引用であることを明確にしつつ、紹介者としての簡単な一言コメントを添えてください。',
     third:
       'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。',
   } as const;
 
-  // ===== 画像 → SNS =====
+  // ===== 画像 / 動画 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false); // 画像→3原稿（全プランOK）
+  const [videoFile, setVideoFile] = useState<File | null>(null); // 動画ファイル（サムネ生成用）
+  const [isGenerating, setIsGenerating] = useState(false);
   const [imageNote, setImageNote] = useState(''); // 補足説明欄
-
-  // ★ 動画サムネ用（Trial / Proのみ）
-  const [videoGenerating, setVideoGenerating] = useState(false);
-  const [videoRemaining, setVideoRemaining] = useState<number | null>(null);
-  const [videoMaxLimit, setVideoMaxLimit] = useState<number | null>(null);
 
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
@@ -143,16 +137,16 @@ export default function UPage() {
         return;
       }
 
+      // userId は今後のAPI呼び出し用に保持
       setUserId(user.id);
-      setUserEmail(user.email || '');
 
       // プロファイル取得（解約情報込み）: id ではなく email で紐づける
       const { data: p, error: profileError } = await supabase
         .from('profiles')
         .select(
-          'registered_at, trial_type, plan_status, plan_tier, is_canceled, plan_valid_until, email',
+          'registered_at, trial_type, plan_status, is_canceled, plan_valid_until',
         )
-        .eq('email', user.email)
+        .eq('email', user.email) // ★ emailで紐づけ
         .maybeSingle();
 
       if (profileError) {
@@ -193,11 +187,6 @@ export default function UPage() {
       }
     })();
   }, [router]);
-
-  const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
-  const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
-  const canUseVideoThumb =
-    planStatus === 'trial' || (planStatus === 'paid' && planTier === 'pro');
 
   // ===== テーマ（色など） =====
   const colors = {
@@ -346,24 +335,87 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS（全プランOK、従来どおり /api/vision） =====
-  const generateFromImage = async () => {
-    if (!userId) {
-      alert('ログインが必要です');
-      return;
-    }
-    if (!imageFile) {
-      alert('画像を選択してください');
-      return;
-    }
+  // ===== 動画からサムネ画像を切り出す =====
+  const extractThumbnailFromVideo = (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const video = document.createElement('video');
+        const url = URL.createObjectURL(file);
+
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          video.remove();
+        };
+
+        video.src = url;
+        video.preload = 'metadata';
+        video.muted = true;
+        (video as any).playsInline = true;
+
+        video.onloadedmetadata = () => {
+          const duration = video.duration;
+          // 1秒目 or 再生時間の半分あたりを狙う
+          let target = 1;
+          if (!isNaN(duration) && duration > 0) {
+            target = Math.min(1, duration / 2);
+          }
+          video.currentTime = target;
+        };
+
+        video.onseeked = () => {
+          const canvas = document.createElement('canvas');
+          const w = video.videoWidth || 1280;
+          const h = video.videoHeight || 720;
+          canvas.width = w;
+          canvas.height = h;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            cleanup();
+            reject(new Error('サムネイル生成に失敗しました（canvas取得エラー）'));
+            return;
+          }
+          ctx.drawImage(video, 0, 0, w, h);
+
+          canvas.toBlob(
+            (blob) => {
+              cleanup();
+              if (!blob) {
+                reject(new Error('サムネイル生成に失敗しました（blob生成エラー）'));
+                return;
+              }
+              const thumbFile = new File([blob], 'thumbnail.jpg', {
+                type: 'image/jpeg',
+              });
+              resolve(thumbFile);
+            },
+            'image/jpeg',
+            0.85,
+          );
+        };
+
+        video.onerror = () => {
+          cleanup();
+          reject(new Error('動画の読み込みに失敗しました'));
+        };
+      } catch (e) {
+        reject(e);
+      }
+    });
+  };
+
+  // ===== 画像 / サムネ共通の生成ロジック =====
+  const runImageGeneration = async (targetFile: File) => {
     if (
-      (imageFile.type || '').toLowerCase().includes('heic') ||
-      (imageFile.type || '').toLowerCase().includes('heif')
+      (targetFile.type || '').toLowerCase().includes('heic') ||
+      (targetFile.type || '').toLowerCase().includes('heif')
     ) {
-      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
+      alert(
+        'HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。',
+      );
       return;
     }
-    if (imageFile.size > 8 * 1024 * 1024) {
+    if (targetFile.size > 8 * 1024 * 1024) {
       alert('画像は8MB以下でお願いします。');
       return;
     }
@@ -371,15 +423,17 @@ export default function UPage() {
     setIsGenerating(true);
 
     try {
-      const ext = imageFile.name.split('.').pop() || 'jpg';
+      const ext =
+        targetFile.name.split('.').pop() ||
+        (targetFile.type.includes('png') ? 'png' : 'jpg');
       const safeFileName = `${Date.now()}.${ext}`;
       const path = `${userId}/${safeFileName}`;
 
       const up = await supabase.storage
         .from('uploads')
-        .upload(path, imageFile, {
+        .upload(path, targetFile, {
           upsert: true,
-          contentType: imageFile.type || 'image/jpeg',
+          contentType: targetFile.type || 'image/jpeg',
         });
 
       if (up.error) {
@@ -430,7 +484,7 @@ export default function UPage() {
       setFbText(j2.text || '');
       setXText(j3.text || '');
 
-      alert('画像からSNS向け文章を生成しました');
+      alert('SNS向け文章を生成しました');
     } catch (e: any) {
       console.error(e);
       alert(`エラー: ${e.message}`);
@@ -439,126 +493,41 @@ export default function UPage() {
     }
   };
 
-  // ===== 動画サムネ（サムネ画像＋メモ想定）→ 3種類の原稿（Trial / Pro限定、回数制限あり） =====
-  const generateFromVideoThumb = async () => {
-    if (!userId || !userEmail) {
-      alert('ログイン情報の取得に失敗しました。いったんログインし直してください。');
+  // ===== 画像 → SNS =====
+  const generateFromImage = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
       return;
     }
     if (!imageFile) {
-      alert('動画のサムネイル用の画像を選択してください');
+      alert('画像を選択してください');
       return;
     }
+    await runImageGeneration(imageFile);
+  };
 
-    // プランチェック（Starterでは利用不可）
-    if (!canUseVideoThumb) {
-      if (planStatus === 'paid' && planTier === 'starter') {
-        alert(
-          '「動画からサムネを作って原稿をつくる」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
-        );
-      } else {
-        alert(
-          'この機能はトライアル期間中または Pro プランでご利用いただけます。マイページからプランをご確認ください。',
-        );
-      }
+  // ===== 動画 → サムネ → SNS =====
+  const generateFromVideo = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
       return;
     }
-
-    if (
-      (imageFile.type || '').toLowerCase().includes('heic') ||
-      (imageFile.type || '').toLowerCase().includes('heif')
-    ) {
-      alert(
-        'HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。',
-      );
+    if (!videoFile) {
+      alert('動画ファイルを選択してください');
       return;
     }
-    if (imageFile.size > 8 * 1024 * 1024) {
-      alert('画像は8MB以下でお願いします。');
-      return;
-    }
-
-    setVideoGenerating(true);
 
     try {
-      const ext = imageFile.name.split('.').pop() || 'jpg';
-      const safeFileName = `video-thumb-${Date.now()}.${ext}`;
-      const path = `${userId}/${safeFileName}`;
-
-      const up = await supabase.storage
-        .from('uploads')
-        .upload(path, imageFile, {
-          upsert: true,
-          contentType: imageFile.type || 'image/jpeg',
-        });
-
-      if (up.error) {
-        alert(`アップロード失敗：${up.error.message}`);
-        setVideoGenerating(false);
-        return;
-      }
-
-      const videoPrompt =
-        'この画像は動画のサムネイルです。動画全体の雰囲気やストーリーが伝わるように、Instagram / Facebook / X 向けの投稿文をそれぞれ1つずつ作成してください。\n\n' +
-        '出力フォーマットは必ず次の形にしてください:\n' +
-        '【INSTAGRAM】\n' +
-        '（Instagram向けの日本語テキスト）\n' +
-        '【FACEBOOK】\n' +
-        '（Facebook向けの日本語テキスト）\n' +
-        '【X】\n' +
-        '（X向けの日本語テキスト）\n\n' +
-        '各テキストには、動画の内容が想像できるような一文を含め、最後にハッシュタグも適度に含めてください。';
-
-      const res = await fetch('/api/version', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          userEmail,
-          prompt:
-            videoPrompt +
-            (imageNote ? `\n【補足説明】この動画についてのメモ：${imageNote}` : ''),
-          filePath: path,
-          mode: 'video_thumb',
-        }),
-      });
-
-      const j = await res.json();
-
-      if (!res.ok) {
-        const msg =
-          j?.message ||
-          j?.error ||
-          '動画サムネイル用の文章生成に失敗しました。';
-        alert(msg);
-        setVideoGenerating(false);
-        return;
-      }
-
-      const rawText: string = j.text || '';
-
-      // 【INSTAGRAM】〜【FACEBOOK】〜【X】〜 を分解
-      const instaPart = rawText.split('【FACEBOOK】')[0].split('【INSTAGRAM】')[1];
-      const fbPart = rawText.split('【X】')[0].split('【FACEBOOK】')[1];
-      const xPart = rawText.split('【X】')[1];
-
-      if (instaPart) setInstaText(instaPart.trim());
-      if (fbPart) setFbText(fbPart.trim());
-      if (xPart) setXText(xPart.trim());
-
-      if (typeof j.remaining === 'number') {
-        setVideoRemaining(j.remaining);
-      }
-      if (typeof j.maxLimit === 'number') {
-        setVideoMaxLimit(j.maxLimit);
-      }
-
-      alert('動画サムネイル用としてSNS向け文章を生成しました');
+      setIsGenerating(true);
+      // まず動画からサムネ画像を作る
+      const thumb = await extractThumbnailFromVideo(videoFile);
+      // そのサムネ画像を使って、画像と同じフローで生成
+      await runImageGeneration(thumb);
     } catch (e: any) {
       console.error(e);
-      alert(`サムネイル生成または文章生成に失敗しました: ${e.message}`);
+      alert(`サムネイル生成に失敗しました: ${e.message || String(e)}`);
     } finally {
-      setVideoGenerating(false);
+      setIsGenerating(false);
     }
   };
 
@@ -575,7 +544,10 @@ export default function UPage() {
         body: JSON.stringify({ userId, userText: chatInput }),
       });
       const j = await res.json();
-      setMessages((m) => [...m, { role: 'assistant', content: j.text || '' }]);
+      setMessages((m) => [
+        ...m,
+        { role: 'assistant', content: j.text || '' },
+      ]);
       setChatInput('');
     } catch (e: any) {
       alert(`エラー: ${e.message}`);
@@ -660,7 +632,9 @@ export default function UPage() {
               紹介する立場を選んでください
             </div>
             <div style={{ display: 'grid', gap: 6 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
                 <input
                   type="radio"
                   name="stance"
@@ -670,7 +644,9 @@ export default function UPage() {
                 />
                 ① 自分が作成したSNS記事を紹介（自分目線）
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
                 <input
                   type="radio"
                   name="stance"
@@ -680,7 +656,9 @@ export default function UPage() {
                 />
                 ② 他人のSNS記事を自分が紹介（紹介者目線）
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
                 <input
                   type="radio"
                   name="stance"
@@ -758,7 +736,9 @@ export default function UPage() {
                 >
                   タイトル案（3つ）
                 </div>
-                <ul style={{ listStyle: 'disc', paddingLeft: 20, margin: 0 }}>
+                <ul
+                  style={{ listStyle: 'disc', paddingLeft: 20, margin: 0 }}
+                >
                   {urlTitles.map((t, i) => (
                     <li
                       key={i}
@@ -820,7 +800,7 @@ export default function UPage() {
         ) : null}
       </div>
 
-      {/* ===== ② 画像 → 生成（中段） ===== */}
+      {/* ===== ② 画像 / 動画 → 生成（中段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
         <h3
           style={{
@@ -830,9 +810,10 @@ export default function UPage() {
             color: colors.ink,
           }}
         >
-          ② 画像からSNS向け文章を自動生成
+          ② 画像 or 動画サムネからSNS向け文章を自動生成
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          {/* 画像ファイル */}
           <label style={labelStyle}>画像ファイル</label>
           <input
             type="file"
@@ -856,8 +837,29 @@ export default function UPage() {
             }}
           />
 
+          {/* 動画ファイル（サムネ用） */}
+          <label style={labelStyle}>動画ファイル（サムネイル生成用・任意）</label>
+          <input
+            type="file"
+            accept="video/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              setVideoFile(f || null);
+            }}
+          />
+          <div
+            style={{
+              fontSize: 11,
+              color: '#6b7280',
+              lineHeight: 1.5,
+              marginTop: -2,
+            }}
+          >
+            ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します。音声は使用しません。
+          </div>
+
           {/* 補足説明欄 */}
-          <label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
+          <label style={labelStyle}>補足説明（どんな写真/動画か、状況など）</label>
           <textarea
             style={{
               ...inputStyle,
@@ -865,60 +867,40 @@ export default function UPage() {
               resize: 'vertical' as const,
               whiteSpace: 'pre-wrap' as const,
             }}
-            placeholder="例：地域イベントで撮影した写真。子どもたちが作った作品展示の様子。"
+            placeholder="例：地域イベントで撮影した動画。子どもたちが作った作品展示の様子。"
             value={imageNote}
             onChange={(e) => setImageNote(e.target.value)}
           />
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {/* 画像 → 3種類の原稿（全プランOK） */}
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginTop: 4,
+            }}
+          >
             <button
               style={isGenerating ? btnGhost : btn}
               onClick={generateFromImage}
-              disabled={!imageFile || isGenerating || videoGenerating}
+              disabled={!imageFile || isGenerating}
             >
               {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
             </button>
 
-            {/* 動画サムネ用 → 3種類の原稿（Trial / Pro限定） */}
             <button
-              style={videoGenerating ? btnGhost : btn}
-              onClick={generateFromVideoThumb}
-              disabled={
-                !imageFile || videoGenerating || isGenerating || !canUseVideoThumb
-              }
+              style={isGenerating ? btnGhost : btnGhost}
+              onClick={generateFromVideo}
+              disabled={!videoFile || isGenerating}
             >
-              {videoGenerating
-                ? '動画サムネ用の原稿を生成中…'
-                : '動画からサムネを作って3種類の原稿を作る（Trial / Pro）'}
+              {isGenerating
+                ? 'サムネ生成中…'
+                : '動画からサムネを作って3種類の原稿を作る'}
             </button>
-
-            <div style={{ fontSize: 11, color: '#6b7280' }}>
-              {canUseVideoThumb ? (
-                <>
-                  {planStatus === 'trial' && (
-                    <div>トライアル期間中：動画サムネ機能は期間中 合計10回まで利用できます。</div>
-                  )}
-                  {planStatus === 'paid' && planTier === 'pro' && (
-                    <div>Proプラン：動画サムネ機能は1ヶ月 30回まで利用できます。</div>
-                  )}
-                  {videoMaxLimit !== null && videoRemaining !== null && (
-                    <div>
-                      現在の残り回数：{videoRemaining} / {videoMaxLimit} 回
-                    </div>
-                  )}
-                </>
-              ) : (
-                <div>
-                  動画サムネイル機能はトライアル期間中または Pro プランでご利用いただけます。
-                  Starterプランではご利用いただけません。
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
-        {/* 3カラム：SNS欄（元の構成そのまま） */}
+        {/* 3カラム：SNS欄 */}
         <div style={cardGrid}>
           {/* Instagram */}
           <div
@@ -1088,7 +1070,10 @@ export default function UPage() {
               </div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop: 8 }}>
-                  <button style={btnGhost} onClick={() => copy(m.content)}>
+                  <button
+                    style={btnGhost}
+                    onClick={() => copy(m.content)}
+                  >
                     この返信をコピー
                   </button>
                 </div>
