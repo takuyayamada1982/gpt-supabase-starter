@@ -5,28 +5,23 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-// ★ video を含めた usage type
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 interface Summary {
   month: string;
   totalRequests: number;
   totalCost: number;
-  countsByType: Record<UsageType, number>;
-  costsByType: Record<UsageType, number>;
+  countsByType: Partial<Record<UsageType, number>>;
+  costsByType: Partial<Record<UsageType, number>>;
 }
 
 interface MonthlyRow {
   month: string;
-  urlCount: number;
-  visionCount: number;
-  chatCount: number;
-  videoCount: number; // ★追加
-  urlCost: number;
-  visionCost: number;
-  chatCost: number;
-  videoCost: number; // ★追加
-  totalCost: number;
+  urlCount: number | null;
+  visionCount: number | null;
+  chatCount: number | null;
+  videoCount: number | null;
+  totalCost: number | null;
 }
 
 interface AdminStatsResponse {
@@ -41,16 +36,16 @@ interface UserProfile {
   is_master: boolean | null;
   registered_at: string | null;
   deleted_at: string | null;
-  trial_type: string | null;   // 'normal' | 'referral'
-  plan_status: string | null;  // 'trial' | 'paid'
-  plan_tier: string | null;    // 'starter' | 'pro' | null
+  trial_type: string | null; // 'normal' | 'referral'
+  plan_status: string | null; // 'trial' | 'paid'
+  plan_tier: string | null; // 'starter' | 'pro' | null
 
-  // /api/admin/users で付与する今月の集計
-  monthly_url_count: number;
-  monthly_vision_count: number;
-  monthly_chat_count: number;
-  monthly_video_count: number;
-  monthly_total_cost: number;
+  // 今月分の利用内訳（/api/admin/users から返す）
+  monthly_url_count?: number | null;
+  monthly_vision_count?: number | null;
+  monthly_chat_count?: number | null;
+  monthly_video_count?: number | null;
+  monthly_total_cost?: number | null;
 }
 
 interface AdminUsersResponse {
@@ -95,6 +90,7 @@ export default function AdminPage() {
           return;
         }
 
+        // profiles は email ベースで紐付け（/u と同じ思想）
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -122,7 +118,7 @@ export default function AdminPage() {
 
   // ② 管理者として認証できたら admin API を叩く
   useEffect(() => {
-    if (!isMaster) return;
+    if (!isMaster) return; // master 以外は API 呼ばない
 
     const fetchAll = async () => {
       try {
@@ -159,21 +155,12 @@ export default function AdminPage() {
     );
   }
 
-  // ロード中
-  if (loading) {
-    return (
-      <FullScreenCenter>
-        <span style={{ fontSize: 14, color: '#cbd5f5' }}>読み込み中...</span>
-      </FullScreenCenter>
-    );
-  }
-
   // 権限NG or データ取得失敗
-  if (errorMsg || !stats) {
+  if (loading || errorMsg || !stats) {
     return (
       <FullScreenCenter>
         <span style={{ fontSize: 14, color: '#fecaca' }}>
-          {errorMsg ?? 'データがありません'}
+          {loading ? '読み込み中...' : errorMsg ?? 'データがありません'}
         </span>
       </FullScreenCenter>
     );
@@ -181,22 +168,36 @@ export default function AdminPage() {
 
   const { summary, monthly } = stats;
 
-  const counts = summary.countsByType;
-  const costs = summary.costsByType;
+  // === counts / costs を安全にマッピング ===
+  const countsRaw = summary.countsByType ?? {};
+  const costsRaw = summary.costsByType ?? {};
 
-  // video がまだ返ってこない旧レスポンスでも安全に 0 を入れる
+  const counts: Record<UsageType, number> = {
+    url: countsRaw.url ?? 0,
+    vision: countsRaw.vision ?? 0,
+    chat: countsRaw.chat ?? 0,
+    video: (countsRaw as any).video ?? 0,
+  };
+
+  const costs: Record<UsageType, number> = {
+    url: costsRaw.url ?? 0,
+    vision: costsRaw.vision ?? 0,
+    chat: costsRaw.chat ?? 0,
+    video: (costsRaw as any).video ?? 0,
+  };
+
   const maxCount = Math.max(
-    counts.url ?? 0,
-    counts.vision ?? 0,
-    counts.chat ?? 0,
-    counts.video ?? 0,
+    counts.url,
+    counts.vision,
+    counts.chat,
+    counts.video,
     1,
   );
   const maxCost = Math.max(
-    costs.url ?? 0,
-    costs.vision ?? 0,
-    costs.chat ?? 0,
-    costs.video ?? 0,
+    costs.url,
+    costs.vision,
+    costs.chat,
+    costs.video,
     1,
   );
 
@@ -204,11 +205,11 @@ export default function AdminPage() {
 
   const formatYen = (v: number) => `¥${v.toFixed(1)}`;
 
-  const typeLabelMap: Record<UsageType, string> = {
+  const typeLabel: Record<UsageType, string> = {
     url: 'URL要約',
     vision: '画像→SNS',
     chat: 'Chat',
-    video: '動画→文字起こし',
+    video: '動画→文字',
   };
 
   const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
@@ -225,7 +226,7 @@ export default function AdminPage() {
       {/* ヘッダー */}
       <header
         style={{
-          borderBottom: '1px solid #1f2937', // ★ここが原因だったので修正
+          borderBottom: '1px solid #1f2937',
           backgroundColor: '#020617',
           position: 'sticky',
           top: 0,
@@ -244,7 +245,9 @@ export default function AdminPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin Dashboard</h1>
+            <h1 style={{ fontSize: 20, fontWeight: 600 }}>
+              Admin Dashboard
+            </h1>
             <p
               style={{
                 fontSize: 12,
@@ -252,12 +255,12 @@ export default function AdminPage() {
                 marginTop: 4,
               }}
             >
-              利用回数・API原価・ユーザー状態をダッシュボードで確認できます
+              利用回数・API原価・ユーザー状態・ユーザー別内訳をダッシュボードで確認できます
             </p>
           </div>
           <div style={{ textAlign: 'right', fontSize: 12, color: '#9ca3af' }}>
             <div>対象月: {monthLabel}</div>
-            <div>URL 0.7円 / 画像 1円 / Chat 0.3円 / 動画 20円（目安）</div>
+            <div>URL 0.7円 / 画像 1円 / Chat 0.3円 / 動画 20円</div>
           </div>
         </div>
       </header>
@@ -283,7 +286,10 @@ export default function AdminPage() {
             title="今月の総リクエスト"
             value={summary.totalRequests.toLocaleString()}
           />
-          <KpiCard title="今月の推定料金" value={formatYen(summary.totalCost)} />
+          <KpiCard
+            title="今月の推定料金"
+            value={formatYen(summary.totalCost)}
+          />
           <KpiCard title="対象月" value={monthLabel} />
         </div>
 
@@ -296,10 +302,10 @@ export default function AdminPage() {
           }}
         >
           {/* 利用回数 */}
-          <Card title="今月の利用回数（棒グラフ）">
+          <Card title="今月の利用回数（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const count = counts[t] ?? 0;
+                const count = counts[t];
                 const width = (count / maxCount) * 100;
                 return (
                   <div key={t}>
@@ -312,9 +318,7 @@ export default function AdminPage() {
                         fontSize: 12,
                       }}
                     >
-                      <span style={{ color: '#e5e7eb' }}>
-                        {typeLabelMap[t]}
-                      </span>
+                      <span style={{ color: '#e5e7eb' }}>{typeLabel[t]}</span>
                       <span style={{ color: '#9ca3af' }}>
                         {count.toLocaleString()} 回
                       </span>
@@ -344,10 +348,10 @@ export default function AdminPage() {
           </Card>
 
           {/* 金額内訳 */}
-          <Card title="今月の金額内訳（棒グラフ）">
+          <Card title="今月の金額内訳（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const cost = costs[t] ?? 0;
+                const cost = costs[t];
                 const width = (cost / maxCost) * 100;
                 return (
                   <div key={t}>
@@ -360,9 +364,7 @@ export default function AdminPage() {
                         fontSize: 12,
                       }}
                     >
-                      <span style={{ color: '#e5e7eb' }}>
-                        {typeLabelMap[t]}
-                      </span>
+                      <span style={{ color: '#e5e7eb' }}>{typeLabel[t]}</span>
                       <span style={{ color: '#9ca3af' }}>
                         {formatYen(cost)}
                       </span>
@@ -421,10 +423,12 @@ export default function AdminPage() {
                 </thead>
                 <tbody>
                   {monthly.map((m) => {
-                    const url = m.urlCount ?? 0;
-                    const vis = m.visionCount ?? 0;
-                    const chat = m.chatCount ?? 0;
-                    const video = m.videoCount ?? 0;
+                    const url = Number(m.urlCount ?? 0);
+                    const vis = Number(m.visionCount ?? 0);
+                    const chat = Number(m.chatCount ?? 0);
+                    const video = Number(m.videoCount ?? 0);
+                    const totalCost = Number(m.totalCost ?? 0);
+
                     return (
                       <tr
                         key={m.month}
@@ -438,7 +442,7 @@ export default function AdminPage() {
                         <Td align="right">
                           {(url + vis + chat + video).toLocaleString()}
                         </Td>
-                        <Td align="right">{formatYen(m.totalCost)}</Td>
+                        <Td align="right">{formatYen(totalCost)}</Td>
                       </tr>
                     );
                   })}
@@ -448,9 +452,9 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* ユーザー一覧テーブル */}
+        {/* ユーザー一覧テーブル（プラン種別 + 利用内訳） */}
         <div style={{ marginTop: 24 }}>
-          <Card title="ユーザー一覧（プラン種別 & トライアル状態 & 今月の利用状況）">
+          <Card title="ユーザー一覧（プラン種別・トライアル・今月の利用内訳）">
             <div
               style={{
                 maxHeight: 360,
@@ -469,27 +473,28 @@ export default function AdminPage() {
                     <Th>アカウントID</Th>
                     <Th>Email</Th>
                     <Th>プラン種別</Th>
-                    <Th>種別</Th>
+                    <Th>トライアル</Th>
                     <Th>登録日</Th>
                     <Th>ステータス</Th>
-                    <Th align="right">今月URL</Th>
-                    <Th align="right">今月画像</Th>
-                    <Th align="right">今月Chat</Th>
-                    <Th align="right">今月動画</Th>
-                    <Th align="right">今月料金</Th>
+                    <Th align="right">URL</Th>
+                    <Th align="right">画像</Th>
+                    <Th align="right">Chat</Th>
+                    <Th align="right">動画</Th>
+                    <Th align="right">当月料金</Th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.map((u) => {
                     const trialView = getTrialStatus(u);
-                    const typeLabel = getTrialTypeLabel(u.trial_type);
-                    const regDate = formatDateYmd(u.registered_at);
+                    const trialTypeLabel = getTrialTypeLabel(u.trial_type);
                     const planLabel = getPlanTierLabel(u.plan_tier);
+                    const regDate = formatDateYmd(u.registered_at);
 
-                    const url = u.monthly_url_count ?? 0;
-                    const vis = u.monthly_vision_count ?? 0;
-                    const chat = u.monthly_chat_count ?? 0;
-                    const video = u.monthly_video_count ?? 0;
+                    const url = Number(u.monthly_url_count ?? 0);
+                    const vis = Number(u.monthly_vision_count ?? 0);
+                    const chat = Number(u.monthly_chat_count ?? 0);
+                    const video = Number(u.monthly_video_count ?? 0);
+                    const cost = Number(u.monthly_total_cost ?? 0);
 
                     return (
                       <tr
@@ -499,7 +504,7 @@ export default function AdminPage() {
                         <Td>{u.account_id ?? '-'}</Td>
                         <Td>{u.email ?? '-'}</Td>
                         <Td>{planLabel}</Td>
-                        <Td>{typeLabel}</Td>
+                        <Td>{trialTypeLabel}</Td>
                         <Td>{regDate}</Td>
                         <Td>
                           <span
@@ -521,9 +526,7 @@ export default function AdminPage() {
                         <Td align="right">{vis.toLocaleString()}</Td>
                         <Td align="right">{chat.toLocaleString()}</Td>
                         <Td align="right">{video.toLocaleString()}</Td>
-                        <Td align="right">
-                          {formatYen(u.monthly_total_cost)}
-                        </Td>
+                        <Td align="right">{formatYen(cost)}</Td>
                       </tr>
                     );
                   })}
@@ -562,6 +565,7 @@ function formatDateYmd(value: string | null): string {
 }
 
 function getTrialStatus(user: UserProfile): TrialStatusView {
+  // 契約者なら常に「契約中」扱い
   if (user.plan_status === 'paid') {
     return {
       kind: 'paid',
@@ -590,6 +594,7 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
 
   const remaining = trialDays - diffDays;
 
+  // 無料期間終了
   if (remaining <= 0) {
     const daysAgo = -remaining;
     return {
@@ -600,6 +605,7 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
+  // まもなく終了（残り1〜3日）
   if (remaining <= 3) {
     return {
       kind: 'trial_warning',
@@ -609,6 +615,7 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
+  // 通常の無料期間中
   if (trialType === 'referral') {
     return {
       kind: 'trial_ok',
@@ -677,7 +684,7 @@ function Card(props: { title: string; children: React.ReactNode }) {
     <section
       style={{
         borderRadius: 16,
-        border: '1px solid #1f2937',
+        border: '1px solid '#1f2937',
         backgroundColor: '#020617',
         padding: 16,
         marginBottom: 8,
