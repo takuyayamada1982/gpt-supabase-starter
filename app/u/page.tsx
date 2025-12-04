@@ -219,7 +219,7 @@ export default function UPage() {
     if (!canUseVideo) {
       if (planStatus === 'paid' && planTier === 'starter') {
         alert(
-          '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。\nトライアル期間中または Pro プランでご利用いただけます。',
+          '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。\nトライアル期間中または Pro プランでご利用いただけます。（画像からの生成は引き続きご利用いただけます）',
         );
       } else {
         alert(
@@ -446,15 +446,16 @@ export default function UPage() {
     });
   };
 
+  type VisionMode = 'image' | 'video_thumb';
+
   // ===== 画像 / サムネ共通の生成ロジック =====
   const runImageGeneration = async (
     targetFile: File,
-    mode: 'image' | 'video_thumb',
-  ) => {
-    if (
-      (targetFile.type || '').toLowerCase().includes('heic') ||
-      (targetFile.type || '').toLowerCase().includes('heif')
-    ) {
+    mode: VisionMode,
+  ): Promise<void> => {
+    // HEICなどチェック
+    const typeLower = (targetFile.type || '').toLowerCase();
+    if (typeLower.includes('heic') || typeLower.includes('heif')) {
       alert(
         'HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。',
       );
@@ -471,6 +472,7 @@ export default function UPage() {
     const safeFileName = `${Date.now()}.${ext}`;
     const path = `${userId}/${safeFileName}`;
 
+    // 画像アップロード
     const up = await supabase.storage
       .from('uploads')
       .upload(path, targetFile, {
@@ -505,14 +507,15 @@ export default function UPage() {
         userId,
         prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
         filePath: path,
-        mode, // image or video_thumb
+        mode, // 'image' or 'video_thumb'
       }),
     });
 
+    // ★ API パスを /api/version に統一
     const [r1, r2, r3] = await Promise.all([
-      fetch('/api/vision', payload(pInsta)),
-      fetch('/api/vision', payload(pFb)),
-      fetch('/api/vision', payload(pX)),
+      fetch('/api/version', payload(pInsta)),
+      fetch('/api/version', payload(pFb)),
+      fetch('/api/version', payload(pX)),
     ]);
 
     const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
@@ -526,6 +529,17 @@ export default function UPage() {
     setInstaText(j1.text || '');
     setFbText(j2.text || '');
     setXText(j3.text || '');
+
+    // 成功メッセージ（動画サムネの場合は残り回数も表示）
+    if (mode === 'video_thumb' && typeof j3?.remaining === 'number') {
+      const rem = j3.remaining;
+      const max = j3.maxLimit ?? undefined;
+      alert(
+        `動画からサムネを作成し、SNS向け文章を生成しました。\n\nこの期間内での残り利用回数：${rem} 回（上限 ${max ?? '?'} 回）`,
+      );
+    } else {
+      alert('SNS向け文章を生成しました');
+    }
   };
 
   // ===== 画像 → SNS =====
@@ -534,10 +548,7 @@ export default function UPage() {
       alert('ログインが必要です');
       return;
     }
-
-    if (!ensureImagePlan()) {
-      return;
-    }
+    if (!ensureImagePlan()) return;
 
     if (!imageFile) {
       alert('画像を選択してください');
@@ -547,7 +558,6 @@ export default function UPage() {
     setIsGenerating(true);
     try {
       await runImageGeneration(imageFile, 'image');
-      alert('SNS向け文章を生成しました');
     } catch (e: any) {
       console.error(e);
       alert(`エラー: ${e.message}`);
@@ -563,9 +573,7 @@ export default function UPage() {
       return;
     }
 
-    if (!ensureVideoPlan()) {
-      return;
-    }
+    if (!ensureVideoPlan()) return;
 
     if (!videoFile) {
       alert('動画ファイルを選択してください');
@@ -576,10 +584,13 @@ export default function UPage() {
     try {
       const thumb = await extractThumbnailFromVideo(videoFile);
       await runImageGeneration(thumb, 'video_thumb');
-      alert('動画からサムネを作成し、SNS向け文章を生成しました');
     } catch (e: any) {
       console.error(e);
-      alert(`サムネイル生成または文章生成に失敗しました: ${e.message || String(e)}`);
+      alert(
+        `サムネイル生成または文章生成に失敗しました: ${
+          (e as any)?.message || String(e)
+        }`,
+      );
     } finally {
       setIsGenerating(false);
     }
@@ -893,7 +904,7 @@ export default function UPage() {
 
           {/* 動画ファイル（サムネ用） */}
           <label style={labelStyle}>
-            動画ファイル（サムネイル生成用・Trial / Pro 限定）
+            動画ファイル（Trial / Pro 限定）
           </label>
           <input
             type="file"
@@ -911,8 +922,7 @@ export default function UPage() {
               marginTop: -2,
             }}
           >
-            ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します（音声は使用しません）。<br />
-            ※ 画像からの生成はトライアル / Starter / Pro で利用可能です。<br />
+            ※ 動画＋補足説明をもとに文章を生成します。<br />
             ※ 動画サムネからの生成は、トライアル期間中は合計10回まで、Proプランは1カ月30回まで利用可能です（Starterでは利用できません）。
           </div>
 
@@ -955,7 +965,7 @@ export default function UPage() {
             >
               {isGenerating
                 ? 'サムネ生成中…'
-                : '動画からサムネを作って3種類の原稿を作る'}
+                : '動画から3種類の原稿を作る'}
             </button>
           </div>
         </div>
