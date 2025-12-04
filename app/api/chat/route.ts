@@ -46,16 +46,16 @@ export async function POST(req: NextRequest) {
     const usage: any = (ai as any).usage;
     if (usage) {
       const totalTokens = usage.total_tokens ?? 0;
-      const cost = totalTokens * 0.003; // ← 0.3円/回想定（1トークン0.003円）
+      const cost = totalTokens * 0.003; // 0.3円/回 相当
 
       await supabase.from('usage_logs').insert({
         user_id: userId,
         model: (ai as any).model ?? 'gpt-4.1-mini',
-        type: 'chat',
+        type: 'chat',                             // ★ここ重要
         prompt_tokens: usage.prompt_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? 0,
         total_tokens: totalTokens,
-        cost, // ★追加
+        cost,                                     // ★ここも重要
       });
     }
 
