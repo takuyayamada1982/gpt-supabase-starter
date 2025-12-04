@@ -226,7 +226,7 @@ export default function AdminPage() {
       {/* ヘッダー */}
       <header
         style={{
-          borderBottom: '1px solid '#1f2937',
+          borderBottom: '1px solid #1f2937',
           backgroundColor: '#020617',
           position: 'sticky',
           top: 0,
