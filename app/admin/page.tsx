@@ -5,7 +5,8 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-type UsageType = 'url' | 'vision' | 'chat';
+// ★ video を追加
+type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 interface Summary {
   month: string;
@@ -20,9 +21,11 @@ interface MonthlyRow {
   urlCount: number;
   visionCount: number;
   chatCount: number;
+  videoCount: number; // ★追加
   urlCost: number;
   visionCost: number;
   chatCost: number;
+  videoCost: number; // ★追加
   totalCost: number;
 }
 
@@ -40,12 +43,14 @@ interface UserProfile {
   deleted_at: string | null;
   trial_type: string | null;   // 'normal' | 'referral'
   plan_status: string | null;  // 'trial' | 'paid'
+  plan_tier: string | null;    // 'starter' | 'pro' | null
 
-  // ★ 追加：今月の利用内訳（/api/admin/users から返しているもの）
-  monthly_url_count?: number;
-  monthly_vision_count?: number;
-  monthly_chat_count?: number;
-  monthly_total_cost?: number;
+  // 今月の利用内訳（/api/admin/users で付けているフィールド）
+  monthly_url_count: number;
+  monthly_vision_count: number;
+  monthly_chat_count: number;
+  monthly_video_count: number;   // ★追加
+  monthly_total_cost: number;
 }
 
 interface AdminUsersResponse {
@@ -154,6 +159,15 @@ export default function AdminPage() {
     );
   }
 
+  // ロード中
+  if (loading) {
+    return (
+      <FullScreenCenter>
+        <span style={{ fontSize: 14, color: '#cbd5f5' }}>読み込み中...</span>
+      </FullScreenCenter>
+    );
+  }
+
   // 権限NG or データ取得失敗
   if (errorMsg || !stats) {
     return (
@@ -170,20 +184,35 @@ export default function AdminPage() {
   const counts = summary.countsByType;
   const costs = summary.costsByType;
 
-  const maxCount = Math.max(counts.url, counts.vision, counts.chat, 1);
-  const maxCost = Math.max(costs.url, costs.vision, costs.chat, 1);
+  // video がない旧レスポンスでも落ちないように 0 デフォルト
+  const maxCount = Math.max(
+    counts.url ?? 0,
+    counts.vision ?? 0,
+    counts.chat ?? 0,
+    counts.video ?? 0,
+    1
+  );
+  const maxCost = Math.max(
+    costs.url ?? 0,
+    costs.vision ?? 0,
+    costs.chat ?? 0,
+    costs.video ?? 0,
+    1
+  );
 
   const monthLabel = summary.month || '—';
 
   const formatYen = (v: number) => `¥${v.toFixed(1)}`;
 
-  const typeLabel: Record<UsageType, string> = {
+  const typeLabelMap: Record<UsageType, string> = {
     url: 'URL要約',
     vision: '画像→SNS',
     chat: 'Chat',
+    video: '動画→文字起こし', // ★追加
   };
 
-  const typeOrder: UsageType[] = ['url', 'vision', 'chat'];
+  // ★ 棒グラフに並べる順序
+  const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
 
   return (
     <div
@@ -191,14 +220,13 @@ export default function AdminPage() {
         minHeight: '100vh',
         backgroundColor: '#020617',
         color: '#e5e7eb',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+        fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
       }}
     >
       {/* ヘッダー */}
       <header
         style={{
-          borderBottom: '1px solid #1f2937',
+          borderBottom: '1px solid '#1f2937',
           backgroundColor: '#020617',
           position: 'sticky',
           top: 0,
@@ -217,9 +245,7 @@ export default function AdminPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600 }}>
-              Admin Dashboard
-            </h1>
+            <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin Dashboard</h1>
             <p
               style={{
                 fontSize: 12,
@@ -232,7 +258,9 @@ export default function AdminPage() {
           </div>
           <div style={{ textAlign: 'right', fontSize: 12, color: '#9ca3af' }}>
             <div>対象月: {monthLabel}</div>
-            <div>URL 0.7円 / 画像 1円 / Chat 0.3円</div>
+            <div>
+              URL 0.7円 / 画像 1円 / Chat 0.3円 / 動画 20円（目安）
+            </div>
           </div>
         </div>
       </header>
@@ -258,10 +286,7 @@ export default function AdminPage() {
             title="今月の総リクエスト"
             value={summary.totalRequests.toLocaleString()}
           />
-          <KpiCard
-            title="今月の推定料金"
-            value={formatYen(summary.totalCost)}
-          />
+          <KpiCard title="今月の推定料金" value={formatYen(summary.totalCost)} />
           <KpiCard title="対象月" value={monthLabel} />
         </div>
 
@@ -277,7 +302,7 @@ export default function AdminPage() {
           <Card title="今月の利用回数（棒グラフ）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const count = counts[t];
+                const count = counts[t] ?? 0;
                 const width = (count / maxCount) * 100;
                 return (
                   <div key={t}>
@@ -290,7 +315,9 @@ export default function AdminPage() {
                         fontSize: 12,
                       }}
                     >
-                      <span style={{ color: '#e5e7eb' }}>{typeLabel[t]}</span>
+                      <span style={{ color: '#e5e7eb' }}>
+                        {typeLabelMap[t]}
+                      </span>
                       <span style={{ color: '#9ca3af' }}>
                         {count.toLocaleString()} 回
                       </span>
@@ -323,7 +350,7 @@ export default function AdminPage() {
           <Card title="今月の金額内訳（棒グラフ）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const cost = costs[t];
+                const cost = costs[t] ?? 0;
                 const width = (cost / maxCost) * 100;
                 return (
                   <div key={t}>
@@ -336,7 +363,9 @@ export default function AdminPage() {
                         fontSize: 12,
                       }}
                     >
-                      <span style={{ color: '#e5e7eb' }}>{typeLabel[t]}</span>
+                      <span style={{ color: '#e5e7eb' }}>
+                        {typeLabelMap[t]}
+                      </span>
                       <span style={{ color: '#9ca3af' }}>
                         {formatYen(cost)}
                       </span>
@@ -388,44 +417,46 @@ export default function AdminPage() {
                     <Th align="right">URL</Th>
                     <Th align="right">画像</Th>
                     <Th align="right">Chat</Th>
+                    <Th align="right">動画</Th> {/* ★追加 */}
                     <Th align="right">合計リクエスト</Th>
                     <Th align="right">料金合計</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {monthly.map((m) => (
-                    <tr
-                      key={m.month}
-                      style={{ borderTop: '1px solid #1f2937' }}
-                    >
-                      <Td>{m.month}</Td>
-                      <Td align="right">{m.urlCount.toLocaleString()}</Td>
-                      <Td align="right">
-                        {m.visionCount.toLocaleString()}
-                      </Td>
-                      <Td align="right">{m.chatCount.toLocaleString()}</Td>
-                      <Td align="right">
-                        {(
-                          m.urlCount +
-                          m.visionCount +
-                          m.chatCount
-                        ).toLocaleString()}
-                      </Td>
-                      <Td align="right">{formatYen(m.totalCost)}</Td>
-                    </tr>
-                  ))}
+                  {monthly.map((m) => {
+                    const url = m.urlCount ?? 0;
+                    const vis = m.visionCount ?? 0;
+                    const chat = m.chatCount ?? 0;
+                    const video = m.videoCount ?? 0; // ★追加
+                    return (
+                      <tr
+                        key={m.month}
+                        style={{ borderTop: '1px solid #1f2937' }}
+                      >
+                        <Td>{m.month}</Td>
+                        <Td align="right">{url.toLocaleString()}</Td>
+                        <Td align="right">{vis.toLocaleString()}</Td>
+                        <Td align="right">{chat.toLocaleString()}</Td>
+                        <Td align="right">{video.toLocaleString()}</Td>
+                        <Td align="right">
+                          {(url + vis + chat + video).toLocaleString()}
+                        </Td>
+                        <Td align="right">{formatYen(m.totalCost)}</Td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
           </Card>
         </div>
 
-        {/* ユーザー一覧テーブル */}
+        {/* ユーザー一覧テーブル（プラン種別 + 利用内訳） */}
         <div style={{ marginTop: 24 }}>
-          <Card title="ユーザー一覧（アカウント情報 & トライアル状態 & 今月利用内訳）">
+          <Card title="ユーザー一覧（プラン種別 & トライアル状態 & 今月の利用状況）">
             <div
               style={{
-                maxHeight: 320,
+                maxHeight: 360,
                 overflow: 'auto',
                 fontSize: 12,
               }}
@@ -440,15 +471,15 @@ export default function AdminPage() {
                   <tr style={{ backgroundColor: '#020617' }}>
                     <Th>アカウントID</Th>
                     <Th>Email</Th>
+                    <Th>プラン種別</Th>
                     <Th>種別</Th>
                     <Th>登録日</Th>
                     <Th>ステータス</Th>
-                    {/* ★ 利用内訳ヘッダー */}
-                    <Th align="right">URL</Th>
-                    <Th align="right">画像</Th>
-                    <Th align="right">Chat</Th>
-                    <Th align="right">合計</Th>
-                    <Th align="right">今月原価</Th>
+                    <Th align="right">今月URL</Th>
+                    <Th align="right">今月画像</Th>
+                    <Th align="right">今月Chat</Th>
+                    <Th align="right">今月動画</Th> {/* ★追加 */}
+                    <Th align="right">今月料金</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -456,13 +487,12 @@ export default function AdminPage() {
                     const trialView = getTrialStatus(u);
                     const typeLabel = getTrialTypeLabel(u.trial_type);
                     const regDate = formatDateYmd(u.registered_at);
+                    const planLabel = getPlanTierLabel(u.plan_tier);
 
-                    // ★ ユーザーごとの今月利用内訳
-                    const urlCount = u.monthly_url_count ?? 0;
-                    const visionCount = u.monthly_vision_count ?? 0;
-                    const chatCount = u.monthly_chat_count ?? 0;
-                    const totalCount = urlCount + visionCount + chatCount;
-                    const monthlyCost = u.monthly_total_cost ?? 0;
+                    const url = u.monthly_url_count ?? 0;
+                    const vis = u.monthly_vision_count ?? 0;
+                    const chat = u.monthly_chat_count ?? 0;
+                    const video = u.monthly_video_count ?? 0; // ★追加
 
                     return (
                       <tr
@@ -471,6 +501,7 @@ export default function AdminPage() {
                       >
                         <Td>{u.account_id ?? '-'}</Td>
                         <Td>{u.email ?? '-'}</Td>
+                        <Td>{planLabel}</Td>
                         <Td>{typeLabel}</Td>
                         <Td>{regDate}</Td>
                         <Td>
@@ -489,21 +520,12 @@ export default function AdminPage() {
                             {trialView.label}
                           </span>
                         </Td>
-                        {/* ★ 利用内訳の列 */}
+                        <Td align="right">{url.toLocaleString()}</Td>
+                        <Td align="right">{vis.toLocaleString()}</Td>
+                        <Td align="right">{chat.toLocaleString()}</Td>
+                        <Td align="right">{video.toLocaleString()}</Td>
                         <Td align="right">
-                          {urlCount.toLocaleString()}
-                        </Td>
-                        <Td align="right">
-                          {visionCount.toLocaleString()}
-                        </Td>
-                        <Td align="right">
-                          {chatCount.toLocaleString()}
-                        </Td>
-                        <Td align="right">
-                          {totalCount.toLocaleString()}
-                        </Td>
-                        <Td align="right">
-                          {formatYen(monthlyCost)}
+                          {formatYen(u.monthly_total_cost)}
                         </Td>
                       </tr>
                     );
@@ -523,6 +545,12 @@ export default function AdminPage() {
 function getTrialTypeLabel(trialType: string | null): string {
   if (trialType === 'referral') return '紹介';
   if (trialType === 'normal') return '通常';
+  return '-';
+}
+
+function getPlanTierLabel(planTier: string | null): string {
+  if (planTier === 'starter') return 'Starter';
+  if (planTier === 'pro') return 'Pro';
   return '-';
 }
 
@@ -617,8 +645,7 @@ function FullScreenCenter(props: { children: React.ReactNode }) {
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontFamily:
-          '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
+        fontFamily: '-apple-system, BlinkMacSystemFont, system-ui, sans-serif',
       }}
     >
       {props.children}
