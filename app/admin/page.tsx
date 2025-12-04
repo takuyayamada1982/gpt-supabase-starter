@@ -40,13 +40,24 @@ interface UserProfile {
   deleted_at: string | null;
   trial_type: string | null;   // 'normal' | 'referral'
   plan_status: string | null;  // 'trial' | 'paid'
+
+  // ★ 追加：今月の利用内訳（/api/admin/users から返しているもの）
+  monthly_url_count?: number;
+  monthly_vision_count?: number;
+  monthly_chat_count?: number;
+  monthly_total_cost?: number;
 }
 
 interface AdminUsersResponse {
   users: UserProfile[];
 }
 
-type TrialStatusKind = 'trial_ok' | 'trial_warning' | 'trial_expired' | 'paid' | 'unknown';
+type TrialStatusKind =
+  | 'trial_ok'
+  | 'trial_warning'
+  | 'trial_expired'
+  | 'paid'
+  | 'unknown';
 
 interface TrialStatusView {
   kind: TrialStatusKind;
@@ -63,7 +74,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // ← 追加：管理者認証チェック用
+  // 管理者認証チェック用
   const [authChecking, setAuthChecking] = useState(true);
   const [isMaster, setIsMaster] = useState(false);
 
@@ -79,7 +90,6 @@ export default function AdminPage() {
           return;
         }
 
-        // profiles は email ベースで紐付け（/u と同じ思想）
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -188,7 +198,7 @@ export default function AdminPage() {
       {/* ヘッダー */}
       <header
         style={{
-          borderBottom: '1px solid #1f2937',
+          borderBottom: '1px solid '#1f2937',
           backgroundColor: '#020617',
           position: 'sticky',
           top: 0,
@@ -384,7 +394,10 @@ export default function AdminPage() {
                 </thead>
                 <tbody>
                   {monthly.map((m) => (
-                    <tr key={m.month} style={{ borderTop: '1px solid #1f2937' }}>
+                    <tr
+                      key={m.month}
+                      style={{ borderTop: '1px solid #1f2937' }}
+                    >
                       <Td>{m.month}</Td>
                       <Td align="right">{m.urlCount.toLocaleString()}</Td>
                       <Td align="right">
@@ -392,7 +405,11 @@ export default function AdminPage() {
                       </Td>
                       <Td align="right">{m.chatCount.toLocaleString()}</Td>
                       <Td align="right">
-                        {(m.urlCount + m.visionCount + m.chatCount).toLocaleString()}
+                        {(
+                          m.urlCount +
+                          m.visionCount +
+                          m.chatCount
+                        ).toLocaleString()}
                       </Td>
                       <Td align="right">{formatYen(m.totalCost)}</Td>
                     </tr>
@@ -405,7 +422,7 @@ export default function AdminPage() {
 
         {/* ユーザー一覧テーブル */}
         <div style={{ marginTop: 24 }}>
-          <Card title="ユーザー一覧（アカウント情報 & トライアル状態）">
+          <Card title="ユーザー一覧（アカウント情報 & トライアル状態 & 今月利用内訳）">
             <div
               style={{
                 maxHeight: 320,
@@ -426,6 +443,12 @@ export default function AdminPage() {
                     <Th>種別</Th>
                     <Th>登録日</Th>
                     <Th>ステータス</Th>
+                    {/* ★ 利用内訳ヘッダー */}
+                    <Th align="right">URL</Th>
+                    <Th align="right">画像</Th>
+                    <Th align="right">Chat</Th>
+                    <Th align="right">合計</Th>
+                    <Th align="right">今月原価</Th>
                   </tr>
                 </thead>
                 <tbody>
@@ -433,6 +456,13 @@ export default function AdminPage() {
                     const trialView = getTrialStatus(u);
                     const typeLabel = getTrialTypeLabel(u.trial_type);
                     const regDate = formatDateYmd(u.registered_at);
+
+                    // ★ ユーザーごとの今月利用内訳
+                    const urlCount = u.monthly_url_count ?? 0;
+                    const visionCount = u.monthly_vision_count ?? 0;
+                    const chatCount = u.monthly_chat_count ?? 0;
+                    const totalCount = urlCount + visionCount + chatCount;
+                    const monthlyCost = u.monthly_total_cost ?? 0;
 
                     return (
                       <tr
@@ -458,6 +488,22 @@ export default function AdminPage() {
                           >
                             {trialView.label}
                           </span>
+                        </Td>
+                        {/* ★ 利用内訳の列 */}
+                        <Td align="right">
+                          {urlCount.toLocaleString()}
+                        </Td>
+                        <Td align="right">
+                          {visionCount.toLocaleString()}
+                        </Td>
+                        <Td align="right">
+                          {chatCount.toLocaleString()}
+                        </Td>
+                        <Td align="right">
+                          {totalCount.toLocaleString()}
+                        </Td>
+                        <Td align="right">
+                          {formatYen(monthlyCost)}
                         </Td>
                       </tr>
                     );
