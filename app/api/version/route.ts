@@ -33,6 +33,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const userId = body.userId as string | undefined;
+    const userEmail = body.userEmail as string | undefined;
     const prompt = body.prompt as string | undefined;
     const filePath = body.filePath as string | undefined;
     const mode: VisionMode =
@@ -52,11 +53,26 @@ export async function POST(req: NextRequest) {
     }
 
     // 1) プロファイル取得（動画サムネ利用可否・Trial期間起点用）
-    const { data: profile, error: profileErr } = await supabase
-      .from('profiles')
-      .select('plan_status, plan_tier, registered_at')
-      .eq('id', userId)
-      .maybeSingle();
+    let profile: any = null;
+    let profileErr: any = null;
+
+    if (userEmail) {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('plan_status, plan_tier, registered_at')
+        .eq('email', userEmail)
+        .maybeSingle();
+      profile = data;
+      profileErr = error;
+    } else {
+      const { data, error } = await supabase
+        .from('profiles')
+        .select('plan_status, plan_tier, registered_at')
+        .eq('id', userId)
+        .maybeSingle();
+      profile = data;
+      profileErr = error;
+    }
 
     if (profileErr) {
       console.error('profile error (version):', profileErr);
@@ -119,8 +135,8 @@ export async function POST(req: NextRequest) {
         const reg = profile?.registered_at
           ? new Date(profile.registered_at)
           : null;
-        usedFrom = reg ? reg.toISOString() : new Date(2000, 0, 1).toISOString(); // かなり過去から
-        usedTo = new Date().toISOString(); // 今まで
+        usedFrom = reg ? reg.toISOString() : new Date(2000, 0, 1).toISOString();
+        usedTo = new Date().toISOString();
       } else if (planStatus === 'paid' && planTier === 'pro') {
         maxVideoCount = 30;
         const { start, end } = getMonthRange();
@@ -128,7 +144,6 @@ export async function POST(req: NextRequest) {
         usedTo = end;
       }
 
-      // usage_logs から video の利用回数を取得
       const { data: usedLogs, error: usedErr } = await supabase
         .from('usage_logs')
         .select('id')
@@ -259,7 +274,6 @@ export async function POST(req: NextRequest) {
 
     // 8) 動画モードのときだけ、残り回数も返却
     if (mode === 'video_thumb') {
-      // 残り回数の再計算（フロント表示用）
       let maxVideoCount = 0;
       let usedFrom = '';
       let usedTo = '';
