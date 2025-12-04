@@ -1,5 +1,6 @@
 // app/layout.tsx
 import type { Metadata } from 'next';
+import './globals.css'; // ★ これが必須（Tailwind＋全体のCSSを読み込む）
 
 export const metadata: Metadata = {
   title: 'Auto post studio',
@@ -14,7 +15,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="ja">
-      <body>{children}</body>
+      {/* 全ページ共通の背景などをここで定義してOK */}
+      <body className="min-h-screen bg-[#fff8f2]">
+        {children}
+      </body>
     </html>
   );
 }
