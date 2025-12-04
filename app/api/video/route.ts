@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 import { Buffer } from 'buffer';
+import { toFile } from 'openai/uploads';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -21,7 +22,7 @@ function getMonthRange() {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth(); // 0-11
-  const start = new Date(year, month, 1).toISOString();   // 月初
+  const start = new Date(year, month, 1).toISOString(); // 月初
   const end = new Date(year, month + 1, 1).toISOString(); // 翌月1日
   return { start, end };
 }
@@ -37,7 +38,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 });
     }
     if (!filePath || typeof filePath !== 'string') {
-      return NextResponse.json({ error: 'filePath required' }, { status: 400 });
+      return NextResponse.json(
+        { error: 'filePath required' },
+        { status: 400 }
+      );
     }
 
     // 1) プロファイル取得（契約種別を確認）
@@ -56,7 +60,7 @@ export async function POST(req: NextRequest) {
     }
 
     const planStatus = profile?.plan_status ?? null; // 'trial' | 'paid' | null
-    const planTier = profile?.plan_tier ?? null;     // 'starter' | 'pro' | null
+    const planTier = profile?.plan_tier ?? null; // 'starter' | 'pro' | null
 
     // 2) プランごとの上限回数を決定
     let maxVideoCount: number | null = null; // null = そもそも利用不可
@@ -132,53 +136,52 @@ export async function POST(req: NextRequest) {
     if (fileErr || !fileData) {
       console.error('Supabase download error:', fileErr);
       return NextResponse.json(
-        { error: 'failed_to_download', message: '動画ファイルの取得に失敗しました。' },
+        {
+          error: 'failed_to_download',
+          message: '動画ファイルの取得に失敗しました。',
+        },
         { status: 400 }
       );
     }
 
-    // Blob -> Buffer
+    // Blob → Buffer
     const arrayBuffer = await fileData.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // 5) まず音声文字起こし（gpt-4o-transcribe）
-    //    👉 Blob はやめて、buffer をそのまま渡すのがポイント
-    const transcriptionRes: any = await (openai as any).audio.transcriptions.create({
-      file: buffer,
-      model: 'gpt-4o-transcribe',
-      response_format: 'text',
+    // 5) OpenAI Audio API で動画を文字起こし（gpt-4o-transcribe）
+    //    toFile で buffer を OpenAI が期待する "file" 形式に変換
+    const audioFile = await toFile(buffer, 'video.mp4', {
+      type: 'video/mp4',
     });
 
-    const transcriptText: string =
-      typeof transcriptionRes === 'string'
-        ? transcriptionRes
-        : transcriptionRes.text ?? '';
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: 'gpt-4o-transcribe',
+      // gpt-4o-transcribe は response_format: 'json' 固定なので明示不要
+      // language: 'ja', // 日本語メインなら指定してもOK
+    });
 
-    // 文字起こしが空ならエラー
-    if (!transcriptText) {
-      return NextResponse.json(
-        {
-          error: 'empty_transcription',
-          message: '動画から音声の文字起こしが取得できませんでした。',
-        },
-        { status: 500 }
-      );
-    }
+    const transcriptText =
+      (transcription as any).text ??
+      JSON.stringify(transcription ?? {}, null, 2);
 
-    // 6) 文字起こし結果をもとに Responses API で整形（要約＋SNS向け）
-    const userContent: any[] = [
+    // 6) Responses API で「SNS用の文章」に整形
+    const userContent = [
       {
-        type: 'input_text',
+        type: 'input_text' as const,
         text:
           prompt +
-          '\n\n---\n以下は動画から起こした文字起こしです。\n' +
-          transcriptText +
-          '\n---\n\n' +
-          'この内容をもとに、SNS投稿に使いやすい日本語テキストを生成してください。',
+          '\n\n---\n以下が動画の文字起こし結果です。この内容をもとに、SNS投稿にそのまま使える形で日本語の文章を作成してください。\n' +
+          '・冗長な部分は整理\n' +
+          '・重要なポイントは残す\n' +
+          '・話し言葉を、読みやすい書き言葉に整える\n' +
+          '・必要に応じて段落分け\n\n' +
+          '【文字起こしテキスト】\n' +
+          transcriptText,
       },
     ];
 
-    const ai = await (openai as any).responses.create({
+    const ai = await openai.responses.create({
       model: 'gpt-4.1-mini',
       input: [
         {
@@ -190,30 +193,13 @@ export async function POST(req: NextRequest) {
       temperature: 0.6,
     });
 
-    const anyAi: any = ai;
-
-    // レスポンスから text を取り出す
-    let text = '';
-    const firstOutput = anyAi.output?.[0];
-    if (firstOutput?.content && Array.isArray(firstOutput.content)) {
-      const textPart = firstOutput.content.find(
-        (c: any) => c.type === 'output_text' && typeof c.text === 'string',
-      );
-      if (textPart) {
-        text = textPart.text;
-      }
-    }
-    if (!text && typeof anyAi.output_text === 'string') {
-      text = anyAi.output_text;
-    }
-
-    const usage: any = anyAi.usage;
+    const usage: any = (ai as any).usage;
 
     // 7) usage_logs に video として記録（コスト20円）
     try {
       await supabase.from('usage_logs').insert({
         user_id: userId,
-        model: anyAi.model ?? 'gpt-4.1-mini',
+        model: (ai as any).model ?? 'gpt-4.1-mini',
         type: 'video',
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
@@ -225,7 +211,9 @@ export async function POST(req: NextRequest) {
       // ここは致命的ではないので処理は続行
     }
 
-    // 8) Supabase 側の動画ファイルは削除（ストレージ節約）
+    const text = (ai as any).output_text ?? '';
+
+    // 8) 生成後に動画ファイルを削除（秘匿性担保）
     try {
       const { error: delError } = await supabase.storage
         .from('uploads')
