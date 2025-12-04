@@ -1,5 +1,11 @@
 /* app/globals.css */
 
+/* ① これが無いと Tailwind のクラスが一切効かない */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ② あなたが元々書いていたリセット＆ベーススタイル */
 :root {
   color-scheme: light;
 }
