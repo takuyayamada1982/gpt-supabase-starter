@@ -141,20 +141,19 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
     const base64Video = buffer.toString('base64');
 
-    // 5) OpenAI に「テキスト + 音声」として投げる
-    //    → input_image ではなく input_audio を使う（ここが今回のポイント）
+    // 5) OpenAI に「テキスト + 動画ファイル」として投げる
+    //    → Responses API では input_file を使う
     const content: any[] = [
       {
         type: 'input_text',
         text:
           prompt +
           '\n\n' +
-          '上記のルールに従い、この動画の音声から内容を文字起こし・要約し、SNS投稿に使いやすい形で整えてください。',
+          '上記のルールに従い、この動画の内容（音声＋映像）をもとに、要約・文字起こしを行い、SNS投稿に使いやすいテキストとして整えてください。',
       },
       {
-        type: 'input_audio',
-        // MIMEタイプは audio/mp4 として渡す（中身は動画mp4だが音声トラックを利用）
-        audio_url: `data:audio/mp4;base64,${base64Video}`,
+        type: 'input_file',
+        file_url: `data:video/mp4;base64,${base64Video}`,
       },
     ];
 
@@ -170,14 +169,33 @@ export async function POST(req: NextRequest) {
       temperature: 0.6,
     });
 
-    const usage: any = (ai as any).usage;
-    const text = (ai as any).output_text ?? '';
+    // レスポンスから text を安全に取り出す
+    let text = '';
+    const anyAi: any = ai;
+
+    // 新仕様: output[0].content[*].type === 'output_text'
+    const firstOutput = anyAi.output?.[0];
+    if (firstOutput?.content && Array.isArray(firstOutput.content)) {
+      const textPart = firstOutput.content.find(
+        (c: any) => c.type === 'output_text' && typeof c.text === 'string',
+      );
+      if (textPart) {
+        text = textPart.text;
+      }
+    }
+
+    // 互換フィールド（あれば）にフォールバック
+    if (!text && typeof anyAi.output_text === 'string') {
+      text = anyAi.output_text;
+    }
+
+    const usage: any = anyAi.usage;
 
     // 6) usage_logs に video として記録（コスト20円）
     try {
       await supabase.from('usage_logs').insert({
         user_id: userId,
-        model: (ai as any).model ?? 'gpt-4.1-mini',
+        model: anyAi.model ?? 'gpt-4.1-mini',
         type: 'video',
         prompt_tokens: usage?.prompt_tokens ?? 0,
         completion_tokens: usage?.completion_tokens ?? 0,
