@@ -127,33 +127,41 @@ export default function UPage() {
   // === 認証 + 解約チェック ===
   useEffect(() => {
     (async () => {
-      const { data } = await supabase.auth.getUser();
+      const { data, error } = await supabase.auth.getUser();
       const user = data.user;
+
+      // セッションが無ければ /auth へ
       if (!user) {
         router.push('/auth');
         return;
       }
 
-     .eq('email', user.email)
+      // userId は今後のAPI呼び出し用に保持
+      setUserId(user.id);
 
-      // プロファイル取得（解約情報込み）
-      const { data: p } = await (supabase as any)
+      // プロファイル取得（解約情報込み）: id ではなく email で紐づける
+      const { data: p, error: profileError } = await supabase
         .from('profiles')
         .select(
           'registered_at, trial_type, plan_status, is_canceled, plan_valid_until',
         )
-        .eq('id', user.id)
-        .single();
+        .eq('email', user.email)  // ★ ここを email で
+        .maybeSingle();
+
+      if (profileError) {
+        console.error('profileError in /u:', profileError);
+      }
 
       if (!p) {
-        await supabase.auth.signOut();
-        router.push('/auth');
+        // プロファイルがまだ無い場合：とりあえずログインは通す
+        // 必要ならここでデフォルトのprofilesをinsertしてもOK
+        setProfile(null);
         return;
       }
 
       setProfile(p);
 
-      // B案：解約済み & 有効期限切れなら強制ログアウト
+      // 解約済み & 有効期限切れなら強制ログアウト
       if (p.is_canceled) {
         if (!p.plan_valid_until) {
           alert('ご契約はすでに終了しているため、サービスをご利用いただけません。');
@@ -176,6 +184,7 @@ export default function UPage() {
       }
     })();
   }, [router]);
+
 
   // ===== テーマ（色など） =====
   const colors = {
