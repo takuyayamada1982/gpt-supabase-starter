@@ -2,6 +2,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
 
 type UsageType = 'url' | 'vision' | 'chat';
 
@@ -54,12 +56,59 @@ interface TrialStatusView {
 }
 
 export default function AdminPage() {
+  const router = useRouter();
+
   const [stats, setStats] = useState<AdminStatsResponse | null>(null);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // ← 追加：管理者認証チェック用
+  const [authChecking, setAuthChecking] = useState(true);
+  const [isMaster, setIsMaster] = useState(false);
+
+  // ① ログイン & is_master チェック
   useEffect(() => {
+    const checkAdmin = async () => {
+      try {
+        const { data } = await supabase.auth.getUser();
+        const user = data.user;
+
+        if (!user) {
+          router.push('/auth');
+          return;
+        }
+
+        // profiles は email ベースで紐付け（/u と同じ思想）
+        const { data: profile, error } = await supabase
+          .from('profiles')
+          .select('is_master')
+          .eq('email', user.email)
+          .maybeSingle();
+
+        if (error) {
+          console.error('admin profile error:', error);
+        }
+
+        if (!profile?.is_master) {
+          setErrorMsg('管理者権限がありません');
+          setAuthChecking(false);
+          return;
+        }
+
+        setIsMaster(true);
+      } finally {
+        setAuthChecking(false);
+      }
+    };
+
+    checkAdmin();
+  }, [router]);
+
+  // ② 管理者として認証できたら admin API を叩く
+  useEffect(() => {
+    if (!isMaster) return; // master 以外は API 呼ばない
+
     const fetchAll = async () => {
       try {
         const [statsRes, usersRes] = await Promise.all([
@@ -84,16 +133,18 @@ export default function AdminPage() {
     };
 
     fetchAll();
-  }, []);
+  }, [isMaster]);
 
-  if (loading) {
+  // 認証確認中
+  if (authChecking) {
     return (
       <FullScreenCenter>
-        <span style={{ fontSize: 14, color: '#cbd5f5' }}>読み込み中...</span>
+        <span style={{ fontSize: 14, color: '#cbd5f5' }}>認証確認中...</span>
       </FullScreenCenter>
     );
   }
 
+  // 権限NG or データ取得失敗
   if (errorMsg || !stats) {
     return (
       <FullScreenCenter>
@@ -341,11 +392,7 @@ export default function AdminPage() {
                       </Td>
                       <Td align="right">{m.chatCount.toLocaleString()}</Td>
                       <Td align="right">
-                        {(
-                          m.urlCount +
-                          m.visionCount +
-                          m.chatCount
-                        ).toLocaleString()}
+                        {(m.urlCount + m.visionCount + m.chatCount).toLocaleString()}
                       </Td>
                       <Td align="right">{formatYen(m.totalCost)}</Td>
                     </tr>
@@ -395,7 +442,7 @@ export default function AdminPage() {
                         <Td>{u.account_id ?? '-'}</Td>
                         <Td>{u.email ?? '-'}</Td>
                         <Td>{typeLabel}</Td>
-                          <Td>{regDate}</Td>
+                        <Td>{regDate}</Td>
                         <Td>
                           <span
                             style={{
