@@ -119,6 +119,12 @@ export default function UPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [imageNote, setImageNote] = useState(''); // 補足説明欄
 
+  // ===== 動画 → 文字起こし＆要約（★追加） =====
+  const [videoFile, setVideoFile] = useState<File | null>(null);
+  const [isVideoGenerating, setIsVideoGenerating] = useState(false);
+  const [videoNote, setVideoNote] = useState('');
+  const [videoText, setVideoText] = useState('');
+
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -145,7 +151,7 @@ export default function UPage() {
         .select(
           'registered_at, trial_type, plan_status, is_canceled, plan_valid_until',
         )
-        .eq('email', user.email)  // ★ ここを email で
+        .eq('email', user.email) // ★ email紐づけ
         .maybeSingle();
 
       if (profileError) {
@@ -154,7 +160,6 @@ export default function UPage() {
 
       if (!p) {
         // プロファイルがまだ無い場合：とりあえずログインは通す
-        // 必要ならここでデフォルトのprofilesをinsertしてもOK
         setProfile(null);
         return;
       }
@@ -184,7 +189,6 @@ export default function UPage() {
       }
     })();
   }, [router]);
-
 
   // ===== テーマ（色など） =====
   const colors = {
@@ -389,7 +393,6 @@ export default function UPage() {
         'X向け：150文字程度で要点だけを伝えるコンパクトな投稿文を日本語で作ってください。' +
         '文中に2〜3個の絵文字を入れ、最後に2〜4個のハッシュタグを付けてください。';
 
-
       const payload = (prompt: string) => ({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -424,6 +427,80 @@ export default function UPage() {
       alert(`エラー: ${e.message}`);
     } finally {
       setIsGenerating(false);
+    }
+  };
+
+  // ===== 動画 → 文字起こし＆要約（★追加） =====
+  const generateFromVideo = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!videoFile) {
+      alert('動画ファイルを選択してください');
+      return;
+    }
+
+    // サイズ上限（必要に応じて調整）
+    if (videoFile.size > 200 * 1024 * 1024) {
+      alert('動画は200MB以下でお願いします。');
+      return;
+    }
+
+    setIsVideoGenerating(true);
+
+    try {
+      const ext = videoFile.name.split('.').pop() || 'mp4';
+      const safeFileName = `video-${Date.now()}.${ext}`;
+      const path = `${userId}/${safeFileName}`;
+
+      // Supabase Storage に動画アップロード
+      const up = await supabase.storage
+        .from('uploads')
+        .upload(path, videoFile, {
+          upsert: true,
+          contentType: videoFile.type || 'video/mp4',
+        });
+
+      if (up.error) {
+        alert(`動画のアップロードに失敗しました：${up.error.message}`);
+        return;
+      }
+
+      const basePrompt =
+        'この動画の内容を日本語で文字起こし・要約し、SNS投稿に使いやすいテキストとして整えてください。' +
+        '\n\n' +
+        '・最初に動画の内容が一文で分かる要約\n' +
+        '・そのあとに詳しい説明（適宜改行して読みやすく）\n' +
+        '・最後に1〜3個のハッシュタグ\n';
+
+      const res = await fetch('/api/video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          prompt: basePrompt + (videoNote ? `\n【補足説明】${videoNote}` : ''),
+          filePath: path,
+        }),
+      });
+
+      const j = await res.json();
+
+      if (!res.ok || j?.error) {
+        const msg =
+          j?.message ||
+          j?.error ||
+          '動画からの文字生成に失敗しました。プラン上限や契約状況もご確認ください。';
+        throw new Error(msg);
+      }
+
+      setVideoText(j.text || '');
+      alert('動画からテキストを生成しました');
+    } catch (e: any) {
+      console.error(e);
+      alert(`エラー: ${e.message}`);
+    } finally {
+      setIsVideoGenerating(false);
     }
   };
 
@@ -474,10 +551,7 @@ export default function UPage() {
         </h2>
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <button
-            style={btnGhost}
-            onClick={() => router.push('/mypage')}
-          >
+          <button style={btnGhost} onClick={() => router.push('/mypage')}>
             マイページ
           </button>
 
@@ -849,7 +923,98 @@ export default function UPage() {
         </div>
       </div>
 
-      {/* ===== ③ 通常チャット（下段） ===== */}
+      {/* ===== ③ 動画 → 文字起こし＆要約（★追加） ===== */}
+      <div style={{ ...panel, marginBottom: 16 }}>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            marginBottom: 8,
+            color: colors.ink,
+          }}
+        >
+          ③ 動画から文字起こし＆要約を自動生成
+        </h3>
+
+        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          <label style={labelStyle}>動画ファイル（mp4 など）</label>
+          <input
+            type="file"
+            accept="video/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              if (!f) {
+                setVideoFile(null);
+                return;
+              }
+              setVideoFile(f);
+            }}
+          />
+
+          <label style={labelStyle}>
+            補足説明（動画の内容・目的などある場合は記載）
+          </label>
+          <textarea
+            style={{
+              ...inputStyle,
+              height: 72,
+              resize: 'vertical' as const,
+              whiteSpace: 'pre-wrap' as const,
+            }}
+            placeholder="例：PTAイベント当日の様子をまとめたダイジェスト動画。保護者向けに雰囲気を伝えたい。"
+            value={videoNote}
+            onChange={(e) => setVideoNote(e.target.value)}
+          />
+
+          <div>
+            <button
+              style={isVideoGenerating ? btnGhost : btn}
+              onClick={generateFromVideo}
+              disabled={!videoFile || isVideoGenerating}
+            >
+              {isVideoGenerating ? '生成中…' : '動画からテキストを作る'}
+            </button>
+          </div>
+        </div>
+
+        {videoText && (
+          <div
+            style={{
+              borderTop: '1px dashed #e5e7eb',
+              paddingTop: 12,
+              marginTop: 4,
+            }}
+          >
+            <div
+              style={{
+                fontWeight: 700,
+                marginBottom: 6,
+                color: colors.ink,
+              }}
+            >
+              動画から生成されたテキスト
+            </div>
+            <div
+              style={{
+                border: '1px solid #eee',
+                borderRadius: 10,
+                padding: 12,
+                background: '#FAFAFA',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {videoText}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <button style={btnGhost} onClick={() => copy(videoText)}>
+                テキストをコピー
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ===== ④ 通常チャット（下段） ===== */}
       <div style={{ ...panel }}>
         <h3
           style={{
@@ -859,7 +1024,7 @@ export default function UPage() {
             color: colors.ink,
           }}
         >
-          ③ 通常チャット
+          ④ 通常チャット
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
           <label style={labelStyle}>記載例（そのまま書き換えてOK）</label>
@@ -919,10 +1084,7 @@ export default function UPage() {
               </div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop: 8 }}>
-                  <button
-                    style={btnGhost}
-                    onClick={() => copy(m.content)}
-                  >
+                  <button style={btnGhost} onClick={() => copy(m.content)}>
                     この返信をコピー
                   </button>
                 </div>
