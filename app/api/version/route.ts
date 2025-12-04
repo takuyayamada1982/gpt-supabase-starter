@@ -170,21 +170,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3) Supabase Storage 上の画像の public URL を取得
-    const { data: publicUrlData, error: publicUrlErr } = supabase.storage
-      .from('uploads')
-      .getPublicUrl(filePath);
+  // 3) Supabase Storage 上の画像の public URL を取得
+const { data: publicUrlData } = supabase.storage
+  .from('uploads')
+  .getPublicUrl(filePath);
 
-    if (publicUrlErr) {
-      console.error('getPublicUrl error:', publicUrlErr);
-      return NextResponse.json(
-        {
-          error: 'public_url_error',
-          message: '画像ファイルのURL取得に失敗しました。',
-        },
-        { status: 400 }
-      );
-    }
+const imageUrl = publicUrlData?.publicUrl;
+if (!imageUrl) {
+  return NextResponse.json(
+    {
+      error: 'no_public_url',
+      message: '画像ファイルのURLが取得できませんでした。',
+    },
+    { status: 400 }
+  );
+}
+
 
     const imageUrl = publicUrlData?.publicUrl;
     if (!imageUrl) {
