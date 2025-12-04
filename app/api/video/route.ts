@@ -167,7 +167,7 @@ export async function POST(req: NextRequest) {
     }
 
     // 6) 文字起こし結果をもとに Responses API で整形（要約＋SNS向け）
-    const userContent = [
+    const userContent: any[] = [
       {
         type: 'input_text',
         text:
@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    const ai = await openai.responses.create({
+    const ai = await (openai as any).responses.create({
       model: 'gpt-4.1-mini',
       input: [
         {
