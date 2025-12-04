@@ -6,6 +6,16 @@ import { supabase } from '@/lib/supabaseClient';
 
 type Msg = { role: 'user' | 'assistant'; content: string };
 
+// 今月の開始・終了を返すヘルパー
+function getMonthRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+  const start = new Date(year, month, 1).toISOString();
+  const end = new Date(year, month + 1, 1).toISOString();
+  return { start, end };
+}
+
 // 上部に出すバナー（トライアル + ご契約中）
 function TrialBanner({ profile }: { profile: any }) {
   if (!profile?.registered_at) return null;
@@ -120,6 +130,11 @@ export default function UPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [imageNote, setImageNote] = useState(''); // 補足説明欄
 
+  // ★ 動画サムネ用の残り回数表示用
+  const [videoRemaining, setVideoRemaining] = useState<number | null>(null);
+  const [videoMaxLimit, setVideoMaxLimit] = useState<number | null>(null);
+  const [videoCountLoading, setVideoCountLoading] = useState(false);
+
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
   const [messages, setMessages] = useState<Msg[]>([]);
@@ -144,7 +159,7 @@ export default function UPage() {
       const { data: p, error: profileError } = await supabase
         .from('profiles')
         .select(
-          'registered_at, trial_type, plan_status, is_canceled, plan_valid_until',
+          'registered_at, trial_type, plan_status, plan_tier, is_canceled, plan_valid_until',
         )
         .eq('email', user.email) // ★ emailで紐づけ
         .maybeSingle();
@@ -187,6 +202,64 @@ export default function UPage() {
       }
     })();
   }, [router]);
+
+  // プラン情報
+  const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
+  const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
+
+  // Trial / Pro だけ動画サムネ機能を使用可
+  const canUseVideoThumb =
+    planStatus === 'trial' || (planStatus === 'paid' && planTier === 'pro');
+
+  // Trial / Pro の場合は usage_logs から今月の video_thumb 利用回数を取得
+  useEffect(() => {
+    const fetchVideoUsage = async () => {
+      if (!userId) return;
+
+      // トライアル：期間中10回 / Pro：月30回
+      let max: number | null = null;
+      if (planStatus === 'trial') {
+        max = 10;
+      } else if (planStatus === 'paid' && planTier === 'pro') {
+        max = 30;
+      } else {
+        setVideoMaxLimit(null);
+        setVideoRemaining(null);
+        return;
+      }
+
+      setVideoCountLoading(true);
+      try {
+        const { start, end } = getMonthRange();
+
+        const { data: logs, error } = await supabase
+          .from('usage_logs')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('type', 'video_thumb')
+          .gte('created_at', start)
+          .lt('created_at', end);
+
+        if (error) {
+          console.error('usage_logs fetch error:', error);
+          setVideoMaxLimit(max);
+          setVideoRemaining(max); // エラー時はいったん満額として扱う
+          return;
+        }
+
+        const usedCount = logs?.length ?? 0;
+        const remaining = Math.max(0, max - usedCount);
+        setVideoMaxLimit(max);
+        setVideoRemaining(remaining);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setVideoCountLoading(false);
+      }
+    };
+
+    fetchVideoUsage();
+  }, [userId, planStatus, planTier]);
 
   // ===== テーマ（色など） =====
   const colors = {
@@ -517,12 +590,57 @@ export default function UPage() {
       return;
     }
 
+    // Starter / 未契約は利用不可（UIはそのまま、押したときに止めるだけ）
+    if (!canUseVideoThumb) {
+      if (planStatus === 'paid' && planTier === 'starter') {
+        alert(
+          '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
+        );
+      } else {
+        alert(
+          'この機能はトライアル期間中または Pro プランでご利用いただけます。マイページからプランをご確認ください。',
+        );
+      }
+      return;
+    }
+
+    // 回数上限チェック（Trial=10, Pro=30）
+    if (videoMaxLimit !== null && videoRemaining !== null) {
+      if (videoRemaining <= 0) {
+        alert(
+          '動画からサムネ生成する機能の今月の上限回数に達しています。（Trial: 期間中10回 / Pro: 月30回）',
+        );
+        return;
+      }
+    }
+
     try {
       setIsGenerating(true);
       // まず動画からサムネ画像を作る
       const thumb = await extractThumbnailFromVideo(videoFile);
       // そのサムネ画像を使って、画像と同じフローで生成
       await runImageGeneration(thumb);
+
+      // 生成に成功したら usage_logs に video_thumb を1件記録し、残り回数を1減らす
+      if (canUseVideoThumb) {
+        try {
+          await supabase.from('usage_logs').insert({
+            user_id: userId,
+            type: 'video_thumb',
+            model: 'client_video_thumb',
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cost: 20, // 仮のコスト（円）
+          });
+
+          setVideoRemaining((prev) =>
+            prev === null ? prev : Math.max(prev - 1, 0),
+          );
+        } catch (logErr) {
+          console.error('usage_logs insert (video_thumb) error:', logErr);
+        }
+      }
     } catch (e: any) {
       console.error(e);
       alert(`サムネイル生成に失敗しました: ${e.message || String(e)}`);
@@ -858,6 +976,29 @@ export default function UPage() {
             ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します。音声は使用しません。
           </div>
 
+          {/* Trial / Pro の残り回数表示 */}
+          <div
+            style={{
+              fontSize: 11,
+              color: '#4b5563',
+              marginTop: 2,
+            }}
+          >
+            {videoCountLoading ? (
+              <>動画サムネイル機能の残り回数を取得しています…</>
+            ) : canUseVideoThumb && videoMaxLimit !== null && videoRemaining !== null ? (
+              <>
+                動画サムネイル機能（Trial: 期間中10回 / Pro: 月30回）<br />
+                現在の残り回数：{videoRemaining} / {videoMaxLimit} 回
+              </>
+            ) : (
+              <>
+                動画サムネイル機能はトライアル期間中または Pro プランでご利用いただけます。
+                Starterプランではご利用いただけません。
+              </>
+            )}
+          </div>
+
           {/* 補足説明欄 */}
           <label style={labelStyle}>補足説明（どんな写真/動画か、状況など）</label>
           <textarea
@@ -1070,10 +1211,7 @@ export default function UPage() {
               </div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop: 8 }}>
-                  <button
-                    style={btnGhost}
-                    onClick={() => copy(m.content)}
-                  >
+                  <button style={btnGhost} onClick={() => copy(m.content)}>
                     この返信をコピー
                   </button>
                 </div>
