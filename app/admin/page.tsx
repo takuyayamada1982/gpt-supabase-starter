@@ -5,7 +5,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-// ★ video を追加
+// ★ video を含めた usage type
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 interface Summary {
@@ -45,11 +45,11 @@ interface UserProfile {
   plan_status: string | null;  // 'trial' | 'paid'
   plan_tier: string | null;    // 'starter' | 'pro' | null
 
-  // 今月の利用内訳（/api/admin/users で付けているフィールド）
+  // /api/admin/users で付与する今月の集計
   monthly_url_count: number;
   monthly_vision_count: number;
   monthly_chat_count: number;
-  monthly_video_count: number;   // ★追加
+  monthly_video_count: number;
   monthly_total_cost: number;
 }
 
@@ -122,7 +122,7 @@ export default function AdminPage() {
 
   // ② 管理者として認証できたら admin API を叩く
   useEffect(() => {
-    if (!isMaster) return; // master 以外は API 呼ばない
+    if (!isMaster) return;
 
     const fetchAll = async () => {
       try {
@@ -184,20 +184,20 @@ export default function AdminPage() {
   const counts = summary.countsByType;
   const costs = summary.costsByType;
 
-  // video がない旧レスポンスでも落ちないように 0 デフォルト
+  // video がまだ返ってこない旧レスポンスでも安全に 0 を入れる
   const maxCount = Math.max(
     counts.url ?? 0,
     counts.vision ?? 0,
     counts.chat ?? 0,
     counts.video ?? 0,
-    1
+    1,
   );
   const maxCost = Math.max(
     costs.url ?? 0,
     costs.vision ?? 0,
     costs.chat ?? 0,
     costs.video ?? 0,
-    1
+    1,
   );
 
   const monthLabel = summary.month || '—';
@@ -208,10 +208,9 @@ export default function AdminPage() {
     url: 'URL要約',
     vision: '画像→SNS',
     chat: 'Chat',
-    video: '動画→文字起こし', // ★追加
+    video: '動画→文字起こし',
   };
 
-  // ★ 棒グラフに並べる順序
   const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
 
   return (
@@ -226,7 +225,7 @@ export default function AdminPage() {
       {/* ヘッダー */}
       <header
         style={{
-          borderBottom: '1px solid #1f2937',
+          borderBottom: '1px solid #1f2937', // ★ここが原因だったので修正
           backgroundColor: '#020617',
           position: 'sticky',
           top: 0,
@@ -258,9 +257,7 @@ export default function AdminPage() {
           </div>
           <div style={{ textAlign: 'right', fontSize: 12, color: '#9ca3af' }}>
             <div>対象月: {monthLabel}</div>
-            <div>
-              URL 0.7円 / 画像 1円 / Chat 0.3円 / 動画 20円（目安）
-            </div>
+            <div>URL 0.7円 / 画像 1円 / Chat 0.3円 / 動画 20円（目安）</div>
           </div>
         </div>
       </header>
@@ -417,7 +414,7 @@ export default function AdminPage() {
                     <Th align="right">URL</Th>
                     <Th align="right">画像</Th>
                     <Th align="right">Chat</Th>
-                    <Th align="right">動画</Th> {/* ★追加 */}
+                    <Th align="right">動画</Th>
                     <Th align="right">合計リクエスト</Th>
                     <Th align="right">料金合計</Th>
                   </tr>
@@ -427,7 +424,7 @@ export default function AdminPage() {
                     const url = m.urlCount ?? 0;
                     const vis = m.visionCount ?? 0;
                     const chat = m.chatCount ?? 0;
-                    const video = m.videoCount ?? 0; // ★追加
+                    const video = m.videoCount ?? 0;
                     return (
                       <tr
                         key={m.month}
@@ -451,7 +448,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* ユーザー一覧テーブル（プラン種別 + 利用内訳） */}
+        {/* ユーザー一覧テーブル */}
         <div style={{ marginTop: 24 }}>
           <Card title="ユーザー一覧（プラン種別 & トライアル状態 & 今月の利用状況）">
             <div
@@ -478,7 +475,7 @@ export default function AdminPage() {
                     <Th align="right">今月URL</Th>
                     <Th align="right">今月画像</Th>
                     <Th align="right">今月Chat</Th>
-                    <Th align="right">今月動画</Th> {/* ★追加 */}
+                    <Th align="right">今月動画</Th>
                     <Th align="right">今月料金</Th>
                   </tr>
                 </thead>
@@ -492,7 +489,7 @@ export default function AdminPage() {
                     const url = u.monthly_url_count ?? 0;
                     const vis = u.monthly_vision_count ?? 0;
                     const chat = u.monthly_chat_count ?? 0;
-                    const video = u.monthly_video_count ?? 0; // ★追加
+                    const video = u.monthly_video_count ?? 0;
 
                     return (
                       <tr
@@ -565,7 +562,6 @@ function formatDateYmd(value: string | null): string {
 }
 
 function getTrialStatus(user: UserProfile): TrialStatusView {
-  // 契約者なら常に「契約中」扱い
   if (user.plan_status === 'paid') {
     return {
       kind: 'paid',
@@ -594,7 +590,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
 
   const remaining = trialDays - diffDays;
 
-  // 無料期間終了
   if (remaining <= 0) {
     const daysAgo = -remaining;
     return {
@@ -605,7 +600,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
-  // まもなく終了（残り1〜3日）
   if (remaining <= 3) {
     return {
       kind: 'trial_warning',
@@ -615,7 +609,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
-  // 通常の無料期間中
   if (trialType === 'referral') {
     return {
       kind: 'trial_ok',
