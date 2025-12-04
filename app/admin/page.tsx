@@ -684,7 +684,7 @@ function Card(props: { title: string; children: React.ReactNode }) {
     <section
       style={{
         borderRadius: 16,
-        border: '1px solid '#1f2937',
+        border: '1px solid #1f2937',
         backgroundColor: '#020617',
         padding: 16,
         marginBottom: 8,
