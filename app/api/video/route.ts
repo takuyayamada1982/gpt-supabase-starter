@@ -142,10 +142,9 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     // 5) まず音声文字起こし（gpt-4o-transcribe）
-    const blob = new Blob([buffer], { type: 'video/mp4' });
-
+    //    👉 Blob はやめて、buffer をそのまま渡すのがポイント
     const transcriptionRes: any = await (openai as any).audio.transcriptions.create({
-      file: blob as any,
+      file: buffer,
       model: 'gpt-4o-transcribe',
       response_format: 'text',
     });
