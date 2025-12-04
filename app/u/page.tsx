@@ -1,3 +1,4 @@
+// app/u/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -109,19 +110,19 @@ export default function UPage() {
   const stancePrompts = {
     self:
       'あなたは投稿者本人です。自分が作成したSNS記事を紹介する立場で、要約とSNS投稿文を作成してください。主語は「私」「当方」でも自然に。過度な自画自賛は避けつつ、背景やねらい、見どころを簡潔に添えてください。',
-    others:
+  others:
       'あなたは第三者として、他人のSNS記事を自分のフォロワーに紹介します。著者へのリスペクトを示し、出典・引用であることを明確にしつつ、紹介者としての簡単な一言コメントを添えてください。',
     third:
       'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。',
   } as const;
 
-  // ===== 画像（サムネ含む） → SNS =====
+  // ===== 画像 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imageGenerating, setImageGenerating] = useState(false); // 純粋な「画像→3原稿」
-  const [videoGenerating, setVideoGenerating] = useState(false); // 「動画サムネとして→3原稿」
+  const [isGenerating, setIsGenerating] = useState(false); // 画像→3原稿（全プランOK）
   const [imageNote, setImageNote] = useState(''); // 補足説明欄
 
-  // 動画サムネ機能の残り回数（Trial / Pro 用）
+  // ★ 動画サムネ用（Trial / Proのみ）
+  const [videoGenerating, setVideoGenerating] = useState(false);
   const [videoRemaining, setVideoRemaining] = useState<number | null>(null);
   const [videoMaxLimit, setVideoMaxLimit] = useState<number | null>(null);
 
@@ -133,7 +134,7 @@ export default function UPage() {
   // === 認証 + 解約チェック ===
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.auth.getUser();
+      const { data } = await supabase.auth.getUser();
       const user = data.user;
 
       // セッションが無ければ /auth へ
@@ -193,7 +194,6 @@ export default function UPage() {
     })();
   }, [router]);
 
-  // プラン判定（動画サムネ機能用）
   const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
   const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
   const canUseVideoThumb =
@@ -346,7 +346,7 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS（プラン共通） =====
+  // ===== 画像 → SNS（全プランOK、従来どおり /api/vision） =====
   const generateFromImage = async () => {
     if (!userId) {
       alert('ログインが必要です');
@@ -360,9 +360,7 @@ export default function UPage() {
       (imageFile.type || '').toLowerCase().includes('heic') ||
       (imageFile.type || '').toLowerCase().includes('heif')
     ) {
-      alert(
-        'HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。',
-      );
+      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
       return;
     }
     if (imageFile.size > 8 * 1024 * 1024) {
@@ -370,7 +368,7 @@ export default function UPage() {
       return;
     }
 
-    setImageGenerating(true);
+    setIsGenerating(true);
 
     try {
       const ext = imageFile.name.split('.').pop() || 'jpg';
@@ -437,18 +435,18 @@ export default function UPage() {
       console.error(e);
       alert(`エラー: ${e.message}`);
     } finally {
-      setImageGenerating(false);
+      setIsGenerating(false);
     }
   };
 
-  // ===== 動画サムネ（= サムネ画像＋メモ）→ SNS（Trial / Proのみ、回数制限あり） =====
+  // ===== 動画サムネ（サムネ画像＋メモ想定）→ 3種類の原稿（Trial / Pro限定、回数制限あり） =====
   const generateFromVideoThumb = async () => {
     if (!userId || !userEmail) {
       alert('ログイン情報の取得に失敗しました。いったんログインし直してください。');
       return;
     }
     if (!imageFile) {
-      alert('動画の画像を選択してください');
+      alert('動画のサムネイル用の画像を選択してください');
       return;
     }
 
@@ -456,7 +454,7 @@ export default function UPage() {
     if (!canUseVideoThumb) {
       if (planStatus === 'paid' && planTier === 'starter') {
         alert(
-          '「動画から原稿を作る」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
+          '「動画からサムネを作って原稿をつくる」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
         );
       } else {
         alert(
@@ -500,10 +498,8 @@ export default function UPage() {
         return;
       }
 
-      // 1回のAPI呼び出しで Instagram / Facebook / X をまとめて生成させる
       const videoPrompt =
-        'この画像は動画のサムネイルです。動画全体の雰囲気やストーリーが伝わるように、' +
-        'Instagram / Facebook / X 向けの投稿文をそれぞれ1つずつ作成してください。\n\n' +
+        'この画像は動画のサムネイルです。動画全体の雰囲気やストーリーが伝わるように、Instagram / Facebook / X 向けの投稿文をそれぞれ1つずつ作成してください。\n\n' +
         '出力フォーマットは必ず次の形にしてください:\n' +
         '【INSTAGRAM】\n' +
         '（Instagram向けの日本語テキスト）\n' +
@@ -550,7 +546,6 @@ export default function UPage() {
       if (fbPart) setFbText(fbPart.trim());
       if (xPart) setXText(xPart.trim());
 
-      // APIから返ってきた残り回数（Trial / Pro のみ）
       if (typeof j.remaining === 'number') {
         setVideoRemaining(j.remaining);
       }
@@ -710,7 +705,7 @@ export default function UPage() {
         </div>
 
         {/* 要約・タイトル案・ハッシュタグ候補 */}
-        {urlSummary || urlTitles.length || urlHashtags.length ? (
+        {(urlSummary || urlTitles.length || urlHashtags.length) ? (
           <div
             style={{
               borderTop: '1px dashed #e5e7eb',
@@ -825,7 +820,7 @@ export default function UPage() {
         ) : null}
       </div>
 
-      {/* ===== ② 画像 / 動画サムネ → 生成（中段） ===== */}
+      {/* ===== ② 画像 → 生成（中段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
         <h3
           style={{
@@ -838,9 +833,7 @@ export default function UPage() {
           ② 画像からSNS向け文章を自動生成
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          <label style={labelStyle}>
-            画像ファイル（通常の投稿画像 / 動画の投稿画像）
-          </label>
+          <label style={labelStyle}>画像ファイル</label>
           <input
             type="file"
             accept="image/*"
@@ -864,9 +857,7 @@ export default function UPage() {
           />
 
           {/* 補足説明欄 */}
-          <label style={labelStyle}>
-            補足説明（どんな写真 / 動画か、状況など）
-          </label>
+          <label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
           <textarea
             style={{
               ...inputStyle,
@@ -879,49 +870,37 @@ export default function UPage() {
             onChange={(e) => setImageNote(e.target.value)}
           />
 
-          <div
-            style={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 8,
-              marginTop: 4,
-            }}
-          >
-            {/* 通常画像 → 3原稿（全プランOK） */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {/* 画像 → 3種類の原稿（全プランOK） */}
             <button
-              style={imageGenerating ? btnGhost : btn}
+              style={isGenerating ? btnGhost : btn}
               onClick={generateFromImage}
-              disabled={!imageFile || imageGenerating || videoGenerating}
+              disabled={!imageFile || isGenerating || videoGenerating}
             >
-              {imageGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
+              {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
             </button>
 
-            {/* 動画サムネとして扱う → 3原稿（Trial / Proのみ・回数制限あり） */}
+            {/* 動画サムネ用 → 3種類の原稿（Trial / Pro限定） */}
             <button
               style={videoGenerating ? btnGhost : btn}
               onClick={generateFromVideoThumb}
               disabled={
-                !imageFile || videoGenerating || imageGenerating || !canUseVideoThumb
+                !imageFile || videoGenerating || isGenerating || !canUseVideoThumb
               }
             >
               {videoGenerating
-                ? '動画の原稿を生成中…'
-                : '動画から3種類の原稿を作る（Trial / Pro）'}
+                ? '動画サムネ用の原稿を生成中…'
+                : '動画からサムネを作って3種類の原稿を作る（Trial / Pro）'}
             </button>
 
             <div style={{ fontSize: 11, color: '#6b7280' }}>
               {canUseVideoThumb ? (
                 <>
                   {planStatus === 'trial' && (
-                    <div>
-                      トライアル期間中：動画サムネ機能は期間中 合計
-                      10回まで利用できます。
-                    </div>
+                    <div>トライアル期間中：動画サムネ機能は期間中 合計10回まで利用できます。</div>
                   )}
                   {planStatus === 'paid' && planTier === 'pro' && (
-                    <div>
-                      Proプラン：動画サムネ機能は1ヶ月 30回まで利用できます。
-                    </div>
+                    <div>Proプラン：動画サムネ機能は1ヶ月 30回まで利用できます。</div>
                   )}
                   {videoMaxLimit !== null && videoRemaining !== null && (
                     <div>
@@ -939,7 +918,7 @@ export default function UPage() {
           </div>
         </div>
 
-        {/* 3カラム：SNS欄（画像生成でも動画サムネ生成でも共通で使う） */}
+        {/* 3カラム：SNS欄（元の構成そのまま） */}
         <div style={cardGrid}>
           {/* Instagram */}
           <div
@@ -951,7 +930,7 @@ export default function UPage() {
             }}
           >
             <div style={{ fontWeight: 800, marginBottom: 6 }}>
-              Instagram（約200〜400文字＋ハッシュタグ）
+              Instagram（約200文字＋ハッシュタグ）
             </div>
             <textarea
               style={{ ...textAreaStyle, background: '#FFFFFF' }}
