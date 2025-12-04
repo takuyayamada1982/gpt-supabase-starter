@@ -144,9 +144,9 @@ export default function UPage() {
       const { data: p, error: profileError } = await supabase
         .from('profiles')
         .select(
-          'registered_at, trial_type, plan_status, is_canceled, plan_valid_until',
+          'registered_at, trial_type, plan_status, plan_tier, is_canceled, plan_valid_until',
         )
-        .eq('email', user.email) // ★ emailで紐づけ
+        .eq('email', user.email) // emailで紐づけ
         .maybeSingle();
 
       if (profileError) {
@@ -188,13 +188,56 @@ export default function UPage() {
     })();
   }, [router]);
 
+  // ===== プラン判定 =====
+  const planStatus = profile?.plan_status as 'trial' | 'paid' | undefined;
+  const planTier = profile?.plan_tier as 'starter' | 'pro' | undefined;
+
+  // 画像生成が使えるか？ → Trial / Starter / Pro
+  const canUseImage =
+    !!profile &&
+    (planStatus === 'trial' ||
+      (planStatus === 'paid' &&
+        (planTier === 'starter' || planTier === 'pro')));
+
+  // 動画サムネ生成が使えるか？ → Trial / Pro
+  const canUseVideo =
+    !!profile &&
+    (planStatus === 'trial' ||
+      (planStatus === 'paid' && planTier === 'pro'));
+
+  const ensureImagePlan = () => {
+    if (!canUseImage) {
+      alert(
+        'この「画像から3種類の原稿を作る」機能は、トライアルまたは Starter / Pro プランでご利用いただけます。\nマイページからご契約状況をご確認ください。',
+      );
+      return false;
+    }
+    return true;
+  };
+
+  const ensureVideoPlan = () => {
+    if (!canUseVideo) {
+      if (planStatus === 'paid' && planTier === 'starter') {
+        alert(
+          '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。\nトライアル期間中または Pro プランでご利用いただけます。',
+        );
+      } else {
+        alert(
+          '「動画からサムネを作って3種類の原稿を作る」機能は、トライアル期間中または Pro プランでご利用いただけます。\nマイページからご契約状況をご確認ください。',
+        );
+      }
+      return false;
+    }
+    return true;
+  };
+
   // ===== テーマ（色など） =====
   const colors = {
     pageBg: '#FCFAF5',
     ink: '#111111',
     panelBorder: '#E5E7EB',
     panelBg: '#FFFFFF',
-    panelShadow: '0 6px 20px rgba(0,0,0,0.06)',
+    panelShadow: '0 6px 20px rgba(0, 0, 0, 0.06)',
 
     igBg: '#FFF5F9',
     igBorder: '#F8C2D8',
@@ -354,7 +397,6 @@ export default function UPage() {
 
         video.onloadedmetadata = () => {
           const duration = video.duration;
-          // 1秒目 or 再生時間の半分あたりを狙う
           let target = 1;
           if (!isNaN(duration) && duration > 0) {
             target = Math.min(1, duration / 2);
@@ -405,7 +447,10 @@ export default function UPage() {
   };
 
   // ===== 画像 / サムネ共通の生成ロジック =====
-  const runImageGeneration = async (targetFile: File) => {
+  const runImageGeneration = async (
+    targetFile: File,
+    mode: 'image' | 'video_thumb',
+  ) => {
     if (
       (targetFile.type || '').toLowerCase().includes('heic') ||
       (targetFile.type || '').toLowerCase().includes('heif')
@@ -420,70 +465,88 @@ export default function UPage() {
       return;
     }
 
-    setIsGenerating(true);
+    const ext =
+      targetFile.name.split('.').pop() ||
+      (targetFile.type.includes('png') ? 'png' : 'jpg');
+    const safeFileName = `${Date.now()}.${ext}`;
+    const path = `${userId}/${safeFileName}`;
 
-    try {
-      const ext =
-        targetFile.name.split('.').pop() ||
-        (targetFile.type.includes('png') ? 'png' : 'jpg');
-      const safeFileName = `${Date.now()}.${ext}`;
-      const path = `${userId}/${safeFileName}`;
-
-      const up = await supabase.storage
-        .from('uploads')
-        .upload(path, targetFile, {
-          upsert: true,
-          contentType: targetFile.type || 'image/jpeg',
-        });
-
-      if (up.error) {
-        alert(`アップロード失敗：${up.error.message}`);
-        return;
-      }
-
-      const pInsta =
-        'Instagram向け：画像の雰囲気が一目で伝わるように、' +
-        '冒頭に1〜2個のアイコン（例：📸✨🎨など）を入れ、文中にも合計5個以上の絵文字・顔文字を必ず入れてください。' +
-        '砕けた口調で300〜400文字程度、日本語で書き、最後に3〜6個のハッシュタグを付けてください。';
-
-      const pFb =
-        'Facebook向け：人情味のある長文ストーリーとして、起→承→転→結の流れで約700文字の日本語文章を作ってください。' +
-        '途中で場面や気持ちの変化が分かるように、段落ごとに改行を入れてください。' +
-        '最後は「あなたならどう感じますか？」「ぜひコメントで教えてください。」のような問いかけで締めてください。' +
-        '絵文字は1〜3個までに控えめにし、最後に3〜6個のハッシュタグを付けてください。';
-
-      const pX =
-        'X向け：150文字程度で要点だけを伝えるコンパクトな投稿文を日本語で作ってください。' +
-        '文中に2〜3個の絵文字を入れ、最後に2〜4個のハッシュタグを付けてください。';
-
-      const payload = (prompt: string) => ({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-          filePath: path,
-        }),
+    const up = await supabase.storage
+      .from('uploads')
+      .upload(path, targetFile, {
+        upsert: true,
+        contentType: targetFile.type || 'image/jpeg',
       });
 
-      const [r1, r2, r3] = await Promise.all([
-        fetch('/api/vision', payload(pInsta)),
-        fetch('/api/vision', payload(pFb)),
-        fetch('/api/vision', payload(pX)),
-      ]);
+    if (up.error) {
+      alert(`アップロード失敗：${up.error.message}`);
+      return;
+    }
 
-      const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+    const pInsta =
+      'Instagram向け：画像の雰囲気が一目で伝わるように、' +
+      '冒頭に1〜2個のアイコン（例：📸✨🎨など）を入れ、文中にも合計5個以上の絵文字・顔文字を必ず入れてください。' +
+      '砕けた口調で300〜400文字程度、日本語で書き、最後に3〜6個のハッシュタグを付けてください。';
 
-      if (j1?.error || j2?.error || j3?.error) {
-        throw new Error(
-          j1?.error || j2?.error || j3?.error || '生成に失敗しました',
-        );
-      }
+    const pFb =
+      'Facebook向け：人情味のある長文ストーリーとして、起→承→転→結の流れで約700文字の日本語文章を作ってください。' +
+      '途中で場面や気持ちの変化が分かるように、段落ごとに改行を入れてください。' +
+      '最後は「あなたならどう感じますか？」「ぜひコメントで教えてください。」のような問いかけで締めてください。' +
+      '絵文字は1〜3個までに控えめにし、最後に3〜6個のハッシュタグを付けてください。';
 
-      setInstaText(j1.text || '');
-      setFbText(j2.text || '');
-      setXText(j3.text || '');
+    const pX =
+      'X向け：150文字程度で要点だけを伝えるコンパクトな投稿文を日本語で作ってください。' +
+      '文中に2〜3個の絵文字を入れ、最後に2〜4個のハッシュタグを付けてください。';
 
+    const payload = (prompt: string) => ({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId,
+        prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+        filePath: path,
+        mode, // image or video_thumb
+      }),
+    });
+
+    const [r1, r2, r3] = await Promise.all([
+      fetch('/api/vision', payload(pInsta)),
+      fetch('/api/vision', payload(pFb)),
+      fetch('/api/vision', payload(pX)),
+    ]);
+
+    const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+
+    if (j1?.error || j2?.error || j3?.error) {
+      throw new Error(
+        j1?.error || j2?.error || j3?.error || '生成に失敗しました',
+      );
+    }
+
+    setInstaText(j1.text || '');
+    setFbText(j2.text || '');
+    setXText(j3.text || '');
+  };
+
+  // ===== 画像 → SNS =====
+  const generateFromImage = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+
+    if (!ensureImagePlan()) {
+      return;
+    }
+
+    if (!imageFile) {
+      alert('画像を選択してください');
+      return;
+    }
+
+    setIsGenerating(true);
+    try {
+      await runImageGeneration(imageFile, 'image');
       alert('SNS向け文章を生成しました');
     } catch (e: any) {
       console.error(e);
@@ -493,39 +556,30 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS =====
-  const generateFromImage = async () => {
-    if (!userId) {
-      alert('ログインが必要です');
-      return;
-    }
-    if (!imageFile) {
-      alert('画像を選択してください');
-      return;
-    }
-    await runImageGeneration(imageFile);
-  };
-
   // ===== 動画 → サムネ → SNS =====
   const generateFromVideo = async () => {
     if (!userId) {
       alert('ログインが必要です');
       return;
     }
+
+    if (!ensureVideoPlan()) {
+      return;
+    }
+
     if (!videoFile) {
       alert('動画ファイルを選択してください');
       return;
     }
 
+    setIsGenerating(true);
     try {
-      setIsGenerating(true);
-      // まず動画からサムネ画像を作る
       const thumb = await extractThumbnailFromVideo(videoFile);
-      // そのサムネ画像を使って、画像と同じフローで生成
-      await runImageGeneration(thumb);
+      await runImageGeneration(thumb, 'video_thumb');
+      alert('動画からサムネを作成し、SNS向け文章を生成しました');
     } catch (e: any) {
       console.error(e);
-      alert(`サムネイル生成に失敗しました: ${e.message || String(e)}`);
+      alert(`サムネイル生成または文章生成に失敗しました: ${e.message || String(e)}`);
     } finally {
       setIsGenerating(false);
     }
@@ -814,7 +868,7 @@ export default function UPage() {
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
           {/* 画像ファイル */}
-          <label style={labelStyle}>画像ファイル</label>
+          <label style={labelStyle}>画像ファイル（Trial / Starter / Pro）</label>
           <input
             type="file"
             accept="image/*"
@@ -838,7 +892,9 @@ export default function UPage() {
           />
 
           {/* 動画ファイル（サムネ用） */}
-          <label style={labelStyle}>動画ファイル（サムネイル生成用・任意）</label>
+          <label style={labelStyle}>
+            動画ファイル（サムネイル生成用・Trial / Pro 限定）
+          </label>
           <input
             type="file"
             accept="video/*"
@@ -855,7 +911,9 @@ export default function UPage() {
               marginTop: -2,
             }}
           >
-            ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します。音声は使用しません。
+            ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します（音声は使用しません）。<br />
+            ※ 画像からの生成はトライアル / Starter / Pro で利用可能です。<br />
+            ※ 動画サムネからの生成は、トライアル期間中は合計10回まで、Proプランは1カ月30回まで利用可能です（Starterでは利用できません）。
           </div>
 
           {/* 補足説明欄 */}
@@ -880,18 +938,20 @@ export default function UPage() {
               marginTop: 4,
             }}
           >
+            {/* 画像から3種（Trial / Starter / Pro） */}
             <button
               style={isGenerating ? btnGhost : btn}
               onClick={generateFromImage}
-              disabled={!imageFile || isGenerating}
+              disabled={!imageFile || isGenerating || !canUseImage}
             >
               {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
             </button>
 
+            {/* 動画からサムネ＋3種（Trial / Pro） */}
             <button
               style={isGenerating ? btnGhost : btnGhost}
               onClick={generateFromVideo}
-              disabled={!videoFile || isGenerating}
+              disabled={!videoFile || isGenerating || !canUseVideo}
             >
               {isGenerating
                 ? 'サムネ生成中…'
@@ -1070,10 +1130,7 @@ export default function UPage() {
               </div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop: 8 }}>
-                  <button
-                    style={btnGhost}
-                    onClick={() => copy(m.content)}
-                  >
+                  <button style={btnGhost} onClick={() => copy(m.content)}>
                     この返信をコピー
                   </button>
                 </div>
