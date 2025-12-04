@@ -134,7 +134,7 @@ export default function UPage() {
         return;
       }
 
-      setUserId(user.id);
+     .eq('email', user.email)
 
       // プロファイル取得（解約情報込み）
       const { data: p } = await (supabase as any)
