@@ -53,7 +53,6 @@ export async function POST(req: NextRequest) {
       articleText = plain.slice(0, 8000);
     } catch (e) {
       console.error('failed to fetch article:', e);
-      // 取得に失敗した場合は、その旨を踏まえて生成（それでも「URLに即していない」可能性は残る）
       articleText = '';
     }
 
@@ -65,7 +64,8 @@ export async function POST(req: NextRequest) {
       `次のURLの記事について、「${viewpointLabel}」立場でSNS投稿に使える素材を作成してください。\n` +
       `URL: ${url}\n\n` +
       `--- 記事本文（抜粋・プレーンテキスト） ---\n` +
-      (articleText || '（本文の取得に失敗しました。この場合は、URLから推測できる一般的な紹介文を短めに作成してください。）') +
+      (articleText ||
+        '（本文の取得に失敗しました。この場合は、URLから推測できる一般的な紹介文を短めに作成してください。）') +
       `\n--- 記事本文ここまで ---\n\n` +
       `【出力フォーマット】\n` +
       `以下のキーを持つ JSON オブジェクト「だけ」を出力してください。説明文や日本語コメントは不要です。\n` +
@@ -95,13 +95,17 @@ export async function POST(req: NextRequest) {
     // usage ログ（type = 'url'）：userId があるときだけ保存
     const usage: any = (ai as any).usage;
     if (userId && usage) {
+      const totalTokens = usage.total_tokens ?? 0;
+      const cost = totalTokens * 0.007; // ← 0.7円/回想定（1トークン0.007円）
+
       await supabase.from('usage_logs').insert({
         user_id: userId,
         model: (ai as any).model ?? 'gpt-4.1-mini',
         type: 'url',
         prompt_tokens: usage.prompt_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? 0,
-        total_tokens: usage.total_tokens ?? 0,
+        total_tokens: totalTokens,
+        cost, // ★追加
       });
     }
 
@@ -121,7 +125,6 @@ export async function POST(req: NextRequest) {
       parsed = JSON.parse(raw);
     } catch (e) {
       console.error('Failed to parse JSON from OpenAI:', raw);
-      // 失敗したら最低限の形で返す（フロントで raw を見る用）
       return NextResponse.json({
         summary: raw,
         titles: [],
@@ -132,7 +135,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // 安全にデフォルトを補う
     const result = {
       summary: parsed.summary ?? '',
       titles: Array.isArray(parsed.titles) ? parsed.titles : [],
