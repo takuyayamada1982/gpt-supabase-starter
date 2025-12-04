@@ -21,8 +21,8 @@ function getMonthRange() {
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth(); // 0-11
-  const start = new Date(year, month, 1).toISOString();          // 月初
-  const end = new Date(year, month + 1, 1).toISOString();        // 翌月1日
+  const start = new Date(year, month, 1).toISOString();   // 月初
+  const end = new Date(year, month + 1, 1).toISOString(); // 翌月1日
   return { start, end };
 }
 
@@ -141,19 +141,20 @@ export async function POST(req: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
     const base64Video = buffer.toString('base64');
 
-    // 5) OpenAI に動画＋テキストで投げる（擬似的に vision と同じ扱い）
+    // 5) OpenAI に「テキスト + 音声」として投げる
+    //    → input_image ではなく input_audio を使う（ここが今回のポイント）
     const content: any[] = [
       {
         type: 'input_text',
         text:
           prompt +
           '\n\n' +
-          '上記のルールに従い、この動画の内容を文字起こし・要約し、SNS投稿に使いやすい形で整えてください。',
+          '上記のルールに従い、この動画の音声から内容を文字起こし・要約し、SNS投稿に使いやすい形で整えてください。',
       },
       {
-        type: 'input_image', // ★ 現状のAPI仕様上、video専用typeがないので image扱いにしています
-        image_url: `data:video/mp4;base64,${base64Video}`,
-        detail: 'low',
+        type: 'input_audio',
+        // MIMEタイプは audio/mp4 として渡す（中身は動画mp4だが音声トラックを利用）
+        audio_url: `data:audio/mp4;base64,${base64Video}`,
       },
     ];
 
@@ -170,6 +171,7 @@ export async function POST(req: NextRequest) {
     });
 
     const usage: any = (ai as any).usage;
+    const text = (ai as any).output_text ?? '';
 
     // 6) usage_logs に video として記録（コスト20円）
     try {
@@ -186,8 +188,6 @@ export async function POST(req: NextRequest) {
       console.error('usage_logs insert error (video):', logErr);
       // ここは致命的ではないので処理は続行
     }
-
-    const text = (ai as any).output_text ?? '';
 
     // 7) 生成後に動画ファイルを削除
     try {
