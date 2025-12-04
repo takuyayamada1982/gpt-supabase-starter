@@ -52,13 +52,14 @@ export default function AuthPage() {
 
         const user = data.user;
 
-        // profiles からアカウントIDが一致するか確認
-        const { data: profile, error: profileError } = await supabase
-          .from('profiles')
-          .select('*')
-          .eq('id', user.id)
-          .eq('account_id', accountId)
-          .maybeSingle();
+      // profiles からアカウントIDが一致するか確認（email + account_id でチェック）
+const { data: profile, error: profileError } = await supabase
+  .from('profiles')
+  .select('*')
+  .eq('email', user.email)       // ★ ここを id ではなく email に
+  .eq('account_id', accountId)   // ★ 入力されたアカウントID
+  .maybeSingle();
+
 
         if (profileError) {
           console.error('profileError:', profileError);
