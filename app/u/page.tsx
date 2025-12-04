@@ -114,16 +114,11 @@ export default function UPage() {
       'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。',
   } as const;
 
-  // ===== 画像 → SNS =====
+  // ===== 画像 / 動画 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null); // 動画ファイル（サムネ生成用）
   const [isGenerating, setIsGenerating] = useState(false);
   const [imageNote, setImageNote] = useState(''); // 補足説明欄
-
-  // ===== 動画 → 文字起こし＆要約（★追加） =====
-  const [videoFile, setVideoFile] = useState<File | null>(null);
-  const [isVideoGenerating, setIsVideoGenerating] = useState(false);
-  const [videoNote, setVideoNote] = useState('');
-  const [videoText, setVideoText] = useState('');
 
   // ===== チャット =====
   const [chatInput, setChatInput] = useState('');
@@ -133,7 +128,7 @@ export default function UPage() {
   // === 認証 + 解約チェック ===
   useEffect(() => {
     (async () => {
-      const { data, error } = await supabase.auth.getUser();
+      const { data } = await supabase.auth.getUser();
       const user = data.user;
 
       // セッションが無ければ /auth へ
@@ -151,7 +146,7 @@ export default function UPage() {
         .select(
           'registered_at, trial_type, plan_status, is_canceled, plan_valid_until',
         )
-        .eq('email', user.email) // ★ email紐づけ
+        .eq('email', user.email) // ★ emailで紐づけ
         .maybeSingle();
 
       if (profileError) {
@@ -159,7 +154,6 @@ export default function UPage() {
       }
 
       if (!p) {
-        // プロファイルがまだ無い場合：とりあえずログインは通す
         setProfile(null);
         return;
       }
@@ -169,7 +163,9 @@ export default function UPage() {
       // 解約済み & 有効期限切れなら強制ログアウト
       if (p.is_canceled) {
         if (!p.plan_valid_until) {
-          alert('ご契約はすでに終了しているため、サービスをご利用いただけません。');
+          alert(
+            'ご契約はすでに終了しているため、サービスをご利用いただけません。',
+          );
           await supabase.auth.signOut();
           router.push('/auth');
           return;
@@ -181,7 +177,9 @@ export default function UPage() {
         const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
         if (diffDays <= 0) {
-          alert('ご契約の有効期限が終了しているため、サービスをご利用いただけません。');
+          alert(
+            'ご契約の有効期限が終了しているため、サービスをご利用いただけません。',
+          );
           await supabase.auth.signOut();
           router.push('/auth');
           return;
@@ -337,24 +335,87 @@ export default function UPage() {
     }
   };
 
-  // ===== 画像 → SNS =====
-  const generateFromImage = async () => {
-    if (!userId) {
-      alert('ログインが必要です');
-      return;
-    }
-    if (!imageFile) {
-      alert('画像を選択してください');
-      return;
-    }
+  // ===== 動画からサムネ画像を切り出す =====
+  const extractThumbnailFromVideo = (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const video = document.createElement('video');
+        const url = URL.createObjectURL(file);
+
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          video.remove();
+        };
+
+        video.src = url;
+        video.preload = 'metadata';
+        video.muted = true;
+        (video as any).playsInline = true;
+
+        video.onloadedmetadata = () => {
+          const duration = video.duration;
+          // 1秒目 or 再生時間の半分あたりを狙う
+          let target = 1;
+          if (!isNaN(duration) && duration > 0) {
+            target = Math.min(1, duration / 2);
+          }
+          video.currentTime = target;
+        };
+
+        video.onseeked = () => {
+          const canvas = document.createElement('canvas');
+          const w = video.videoWidth || 1280;
+          const h = video.videoHeight || 720;
+          canvas.width = w;
+          canvas.height = h;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            cleanup();
+            reject(new Error('サムネイル生成に失敗しました（canvas取得エラー）'));
+            return;
+          }
+          ctx.drawImage(video, 0, 0, w, h);
+
+          canvas.toBlob(
+            (blob) => {
+              cleanup();
+              if (!blob) {
+                reject(new Error('サムネイル生成に失敗しました（blob生成エラー）'));
+                return;
+              }
+              const thumbFile = new File([blob], 'thumbnail.jpg', {
+                type: 'image/jpeg',
+              });
+              resolve(thumbFile);
+            },
+            'image/jpeg',
+            0.85,
+          );
+        };
+
+        video.onerror = () => {
+          cleanup();
+          reject(new Error('動画の読み込みに失敗しました'));
+        };
+      } catch (e) {
+        reject(e);
+      }
+    });
+  };
+
+  // ===== 画像 / サムネ共通の生成ロジック =====
+  const runImageGeneration = async (targetFile: File) => {
     if (
-      (imageFile.type || '').toLowerCase().includes('heic') ||
-      (imageFile.type || '').toLowerCase().includes('heif')
+      (targetFile.type || '').toLowerCase().includes('heic') ||
+      (targetFile.type || '').toLowerCase().includes('heif')
     ) {
-      alert('HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。');
+      alert(
+        'HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。',
+      );
       return;
     }
-    if (imageFile.size > 8 * 1024 * 1024) {
+    if (targetFile.size > 8 * 1024 * 1024) {
       alert('画像は8MB以下でお願いします。');
       return;
     }
@@ -362,15 +423,17 @@ export default function UPage() {
     setIsGenerating(true);
 
     try {
-      const ext = imageFile.name.split('.').pop() || 'jpg';
+      const ext =
+        targetFile.name.split('.').pop() ||
+        (targetFile.type.includes('png') ? 'png' : 'jpg');
       const safeFileName = `${Date.now()}.${ext}`;
       const path = `${userId}/${safeFileName}`;
 
       const up = await supabase.storage
         .from('uploads')
-        .upload(path, imageFile, {
+        .upload(path, targetFile, {
           upsert: true,
-          contentType: imageFile.type || 'image/jpeg',
+          contentType: targetFile.type || 'image/jpeg',
         });
 
       if (up.error) {
@@ -430,7 +493,20 @@ export default function UPage() {
     }
   };
 
-  // ===== 動画 → 文字起こし＆要約（★追加） =====
+  // ===== 画像 → SNS =====
+  const generateFromImage = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!imageFile) {
+      alert('画像を選択してください');
+      return;
+    }
+    await runImageGeneration(imageFile);
+  };
+
+  // ===== 動画 → サムネ → SNS =====
   const generateFromVideo = async () => {
     if (!userId) {
       alert('ログインが必要です');
@@ -441,66 +517,17 @@ export default function UPage() {
       return;
     }
 
-    // サイズ上限（必要に応じて調整）
-    if (videoFile.size > 200 * 1024 * 1024) {
-      alert('動画は200MB以下でお願いします。');
-      return;
-    }
-
-    setIsVideoGenerating(true);
-
     try {
-      const ext = videoFile.name.split('.').pop() || 'mp4';
-      const safeFileName = `video-${Date.now()}.${ext}`;
-      const path = `${userId}/${safeFileName}`;
-
-      // Supabase Storage に動画アップロード
-      const up = await supabase.storage
-        .from('uploads')
-        .upload(path, videoFile, {
-          upsert: true,
-          contentType: videoFile.type || 'video/mp4',
-        });
-
-      if (up.error) {
-        alert(`動画のアップロードに失敗しました：${up.error.message}`);
-        return;
-      }
-
-      const basePrompt =
-        'この動画の内容を日本語で文字起こし・要約し、SNS投稿に使いやすいテキストとして整えてください。' +
-        '\n\n' +
-        '・最初に動画の内容が一文で分かる要約\n' +
-        '・そのあとに詳しい説明（適宜改行して読みやすく）\n' +
-        '・最後に1〜3個のハッシュタグ\n';
-
-      const res = await fetch('/api/video', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId,
-          prompt: basePrompt + (videoNote ? `\n【補足説明】${videoNote}` : ''),
-          filePath: path,
-        }),
-      });
-
-      const j = await res.json();
-
-      if (!res.ok || j?.error) {
-        const msg =
-          j?.message ||
-          j?.error ||
-          '動画からの文字生成に失敗しました。プラン上限や契約状況もご確認ください。';
-        throw new Error(msg);
-      }
-
-      setVideoText(j.text || '');
-      alert('動画からテキストを生成しました');
+      setIsGenerating(true);
+      // まず動画からサムネ画像を作る
+      const thumb = await extractThumbnailFromVideo(videoFile);
+      // そのサムネ画像を使って、画像と同じフローで生成
+      await runImageGeneration(thumb);
     } catch (e: any) {
       console.error(e);
-      alert(`エラー: ${e.message}`);
+      alert(`サムネイル生成に失敗しました: ${e.message || String(e)}`);
     } finally {
-      setIsVideoGenerating(false);
+      setIsGenerating(false);
     }
   };
 
@@ -517,7 +544,10 @@ export default function UPage() {
         body: JSON.stringify({ userId, userText: chatInput }),
       });
       const j = await res.json();
-      setMessages((m) => [...m, { role: 'assistant', content: j.text || '' }]);
+      setMessages((m) => [
+        ...m,
+        { role: 'assistant', content: j.text || '' },
+      ]);
       setChatInput('');
     } catch (e: any) {
       alert(`エラー: ${e.message}`);
@@ -602,7 +632,9 @@ export default function UPage() {
               紹介する立場を選んでください
             </div>
             <div style={{ display: 'grid', gap: 6 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
                 <input
                   type="radio"
                   name="stance"
@@ -612,7 +644,9 @@ export default function UPage() {
                 />
                 ① 自分が作成したSNS記事を紹介（自分目線）
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
                 <input
                   type="radio"
                   name="stance"
@@ -622,7 +656,9 @@ export default function UPage() {
                 />
                 ② 他人のSNS記事を自分が紹介（紹介者目線）
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
                 <input
                   type="radio"
                   name="stance"
@@ -700,7 +736,9 @@ export default function UPage() {
                 >
                   タイトル案（3つ）
                 </div>
-                <ul style={{ listStyle: 'disc', paddingLeft: 20, margin: 0 }}>
+                <ul
+                  style={{ listStyle: 'disc', paddingLeft: 20, margin: 0 }}
+                >
                   {urlTitles.map((t, i) => (
                     <li
                       key={i}
@@ -762,7 +800,7 @@ export default function UPage() {
         ) : null}
       </div>
 
-      {/* ===== ② 画像 → 生成（中段） ===== */}
+      {/* ===== ② 画像 / 動画 → 生成（中段） ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
         <h3
           style={{
@@ -772,9 +810,10 @@ export default function UPage() {
             color: colors.ink,
           }}
         >
-          ② 画像からSNS向け文章を自動生成
+          ② 画像 or 動画サムネからSNS向け文章を自動生成
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          {/* 画像ファイル */}
           <label style={labelStyle}>画像ファイル</label>
           <input
             type="file"
@@ -798,8 +837,29 @@ export default function UPage() {
             }}
           />
 
+          {/* 動画ファイル（サムネ用） */}
+          <label style={labelStyle}>動画ファイル（サムネイル生成用・任意）</label>
+          <input
+            type="file"
+            accept="video/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              setVideoFile(f || null);
+            }}
+          />
+          <div
+            style={{
+              fontSize: 11,
+              color: '#6b7280',
+              lineHeight: 1.5,
+              marginTop: -2,
+            }}
+          >
+            ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します。音声は使用しません。
+          </div>
+
           {/* 補足説明欄 */}
-          <label style={labelStyle}>補足説明（どんな写真か、状況など）</label>
+          <label style={labelStyle}>補足説明（どんな写真/動画か、状況など）</label>
           <textarea
             style={{
               ...inputStyle,
@@ -807,18 +867,35 @@ export default function UPage() {
               resize: 'vertical' as const,
               whiteSpace: 'pre-wrap' as const,
             }}
-            placeholder="例：地域イベントで撮影した写真。子どもたちが作った作品展示の様子。"
+            placeholder="例：地域イベントで撮影した動画。子どもたちが作った作品展示の様子。"
             value={imageNote}
             onChange={(e) => setImageNote(e.target.value)}
           />
 
-          <div>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginTop: 4,
+            }}
+          >
             <button
               style={isGenerating ? btnGhost : btn}
               onClick={generateFromImage}
               disabled={!imageFile || isGenerating}
             >
               {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
+            </button>
+
+            <button
+              style={isGenerating ? btnGhost : btnGhost}
+              onClick={generateFromVideo}
+              disabled={!videoFile || isGenerating}
+            >
+              {isGenerating
+                ? 'サムネ生成中…'
+                : '動画からサムネを作って3種類の原稿を作る'}
             </button>
           </div>
         </div>
@@ -923,98 +1000,7 @@ export default function UPage() {
         </div>
       </div>
 
-      {/* ===== ③ 動画 → 文字起こし＆要約（★追加） ===== */}
-      <div style={{ ...panel, marginBottom: 16 }}>
-        <h3
-          style={{
-            fontSize: 16,
-            fontWeight: 700,
-            marginBottom: 8,
-            color: colors.ink,
-          }}
-        >
-          ③ 動画から文字起こし＆要約を自動生成
-        </h3>
-
-        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
-          <label style={labelStyle}>動画ファイル（mp4 など）</label>
-          <input
-            type="file"
-            accept="video/*"
-            onChange={(e) => {
-              const f = e.target.files?.[0] || null;
-              if (!f) {
-                setVideoFile(null);
-                return;
-              }
-              setVideoFile(f);
-            }}
-          />
-
-          <label style={labelStyle}>
-            補足説明（動画の内容・目的などある場合は記載）
-          </label>
-          <textarea
-            style={{
-              ...inputStyle,
-              height: 72,
-              resize: 'vertical' as const,
-              whiteSpace: 'pre-wrap' as const,
-            }}
-            placeholder="例：PTAイベント当日の様子をまとめたダイジェスト動画。保護者向けに雰囲気を伝えたい。"
-            value={videoNote}
-            onChange={(e) => setVideoNote(e.target.value)}
-          />
-
-          <div>
-            <button
-              style={isVideoGenerating ? btnGhost : btn}
-              onClick={generateFromVideo}
-              disabled={!videoFile || isVideoGenerating}
-            >
-              {isVideoGenerating ? '生成中…' : '動画からテキストを作る'}
-            </button>
-          </div>
-        </div>
-
-        {videoText && (
-          <div
-            style={{
-              borderTop: '1px dashed #e5e7eb',
-              paddingTop: 12,
-              marginTop: 4,
-            }}
-          >
-            <div
-              style={{
-                fontWeight: 700,
-                marginBottom: 6,
-                color: colors.ink,
-              }}
-            >
-              動画から生成されたテキスト
-            </div>
-            <div
-              style={{
-                border: '1px solid #eee',
-                borderRadius: 10,
-                padding: 12,
-                background: '#FAFAFA',
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {videoText}
-            </div>
-            <div style={{ marginTop: 8 }}>
-              <button style={btnGhost} onClick={() => copy(videoText)}>
-                テキストをコピー
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* ===== ④ 通常チャット（下段） ===== */}
+      {/* ===== ③ 通常チャット（下段） ===== */}
       <div style={{ ...panel }}>
         <h3
           style={{
@@ -1024,7 +1010,7 @@ export default function UPage() {
             color: colors.ink,
           }}
         >
-          ④ 通常チャット
+          ③ 通常チャット
         </h3>
         <div style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
           <label style={labelStyle}>記載例（そのまま書き換えてOK）</label>
@@ -1084,7 +1070,10 @@ export default function UPage() {
               </div>
               {m.role === 'assistant' && (
                 <div style={{ marginTop: 8 }}>
-                  <button style={btnGhost} onClick={() => copy(m.content)}>
+                  <button
+                    style={btnGhost}
+                    onClick={() => copy(m.content)}
+                  >
                     この返信をコピー
                   </button>
                 </div>
