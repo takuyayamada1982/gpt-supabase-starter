@@ -32,9 +32,7 @@ export default function AuthPage() {
     setLoading(true);
     try {
       if (isLogin) {
-        // ---------------------------
         // ① Supabase Auth でサインイン
-        // ---------------------------
         const { data: signInData, error: signInError } =
           await supabase.auth.signInWithPassword({
             email,
@@ -49,9 +47,7 @@ export default function AuthPage() {
 
         const user = signInData.user;
 
-        // ---------------------------------------------
-        // ② profiles から account_id を取得して照合する
-        // ---------------------------------------------
+        // ② profiles から account_id を取得して照合
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('account_id')
@@ -68,20 +64,15 @@ export default function AuthPage() {
         }
 
         if (String(profile.account_id) !== String(accountId)) {
-          // アカウントID不一致 → 強制サインアウト
           await supabase.auth.signOut();
           alert('アカウントIDが正しくありません');
           return;
         }
 
-        // ---------------------------
         // ③ ログイン成功 → ユーザーページへ
-        // ---------------------------
-        router.push('/u'); // 実際のユーザーダッシュボードのパスに合わせて変更
+        router.push('/u'); // 実際のダッシュボードのパスに合わせて変更
       } else {
-        // ---------------------------
-        // 新規登録モード
-        // ---------------------------
+        // 新規登録
         const { data: signUpData, error: signUpError } =
           await supabase.auth.signUp({
             email,
@@ -96,13 +87,11 @@ export default function AuthPage() {
 
         const user = signUpData.user;
 
-        // profiles にレコード作成
         const { error: profileInsertError } = await supabase
           .from('profiles')
           .insert({
             id: user.id,
             email,
-            // トライアル発行時にここへ 99999 などを入れてもOK
             account_id: accountId || null,
             is_master: false,
           });
@@ -122,8 +111,8 @@ export default function AuthPage() {
   };
 
   return (
-    <main className="min-h-screen flex items-center justify-center bg-[#fff8f2]">
-      {/* 背景：パレットっぽい淡い色のドットを散らす */}
+    <main className="relative min-h-screen flex items-center justify-center bg-[#fff8f2]">
+      {/* 背景：パレットっぽい淡い色のドット */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute -top-6 left-6 w-16 h-16 rounded-full bg-[#ffd6e3] opacity-70" />
         <div className="absolute top-10 right-10 w-20 h-20 rounded-full bg-[#ffe9a9] opacity-70" />
@@ -150,7 +139,6 @@ export default function AuthPage() {
 
         {/* カード本体 */}
         <div className="bg-white/90 rounded-2xl shadow-xl border border-[#f3d7c5] px-7 py-8">
-          {/* サインイン / 新規登録 タイトル（カード左上） */}
           <div className="flex items-baseline justify-between mb-6">
             <h1 className="text-lg font-semibold text-slate-900">
               {isLogin ? 'サインイン' : '新規登録'}
