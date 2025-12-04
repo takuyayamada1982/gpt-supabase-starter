@@ -1,113 +1,87 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { getAccessState, type ProfileRow } from '@/lib/accessControl';
-
-type Mode = 'login' | 'register';
-
-const generateReferralCode = () => {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
-};
 
 export default function AuthPage() {
   const router = useRouter();
 
-  const [mode, setMode] = useState<Mode>('login');
+  // mode: login or register
+  const [mode, setMode] = useState<'login' | 'register'>('login');
+
   const [email, setEmail] = useState('');
   const [accountId, setAccountId] = useState(''); // ログイン時のみ使用
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
 
   const isLogin = mode === 'login';
 
-  const handleSubmit = async (e: FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMessage('');
 
     if (!email || !password) {
-      setErrorMessage('メールアドレスとパスワードを入力してください');
+      alert('メールアドレスとパスワードを入力してください');
       return;
     }
     if (isLogin && !accountId) {
-      setErrorMessage('アカウントIDを入力してください');
+      alert('アカウントID（5桁）を入力してください');
       return;
     }
 
     setLoading(true);
-
     try {
       if (isLogin) {
-        // ============================
-        // ログイン処理
-        // ============================
-        const normalizedAccountId = accountId.trim();
-
-        const { data: authData, error: authError } =
+        // ---------------------------
+        // ① Supabase Auth でサインイン
+        // ---------------------------
+        const { data: signInData, error: signInError } =
           await supabase.auth.signInWithPassword({
             email,
             password,
           });
 
-        if (authError || !authData.user) {
-          setErrorMessage('メールアドレスまたはパスワードが正しくありません');
+        if (signInError || !signInData.user) {
+          console.error('signIn error:', signInError);
+          alert('メールアドレスまたはパスワードが正しくありません');
           return;
         }
 
-        const user = authData.user;
+        const user = signInData.user;
 
-        // profiles を email で取得（id のズレに影響されないようにする）
-        const { data: profiles, error: profileError } = await supabase
+        // ---------------------------------------------
+        // ② profiles から account_id を取得して照合する
+        // ---------------------------------------------
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('*')
-          .eq('email', user.email)
-          .limit(1);
-
-        const profile = profiles && profiles.length > 0
-          ? (profiles[0] as ProfileRow)
-          : null;
+          .select('account_id')
+          .eq('id', user.id)
+          .single();
 
         if (profileError || !profile) {
+          console.error('profile error:', profileError);
+          alert(
+            'プロフィール情報が見つかりません。管理者にお問い合わせください。'
+          );
           await supabase.auth.signOut();
-          setErrorMessage('ユーザー情報の取得に失敗しました。');
           return;
         }
 
-        // account_id を文字列化して比較（DB が数値型でも OK）
-        const storedAccountId = profile.account_id
-          ? String(profile.account_id)
-          : '';
-
-        if (storedAccountId !== normalizedAccountId) {
+        if (String(profile.account_id) !== String(accountId)) {
+          // アカウントID不一致 → 強制サインアウト
           await supabase.auth.signOut();
-          setErrorMessage('アカウントIDが登録情報と一致しません。');
+          alert('アカウントIDが正しくありません');
           return;
         }
 
-        // アクセス可能か判定（トライアル終了 / 解約など）
-        const access = getAccessState(profile);
-        if (!access.isActive) {
-          await supabase.auth.signOut();
-          setErrorMessage(access.message);
-          return;
-        }
-
-        // OK → /u へ
-        router.push('/u');
+        // ---------------------------
+        // ③ ログイン成功 → ユーザーページへ
+        // ---------------------------
+        router.push('/u'); // 実際のユーザーダッシュボードのパスに合わせて変更
       } else {
-        // ============================
-        // 新規登録処理
-        // ============================
-
-        // ?ref=XXXX を window.location から取得
-        let refCode: string | null = null;
-        if (typeof window !== 'undefined') {
-          const params = new URLSearchParams(window.location.search);
-          refCode = params.get('ref');
-        }
-
+        // ---------------------------
+        // 新規登録モード
+        // ---------------------------
         const { data: signUpData, error: signUpError } =
           await supabase.auth.signUp({
             email,
@@ -115,346 +89,163 @@ export default function AuthPage() {
           });
 
         if (signUpError || !signUpData.user) {
-          setErrorMessage('新規登録に失敗しました。時間をおいて再度お試しください。');
+          console.error('signUp error:', signUpError);
+          alert('ユーザー登録に失敗しました');
           return;
         }
 
         const user = signUpData.user;
 
-        const trialType: ProfileRow['trial_type'] =
-          refCode ? 'referral' : 'normal';
-
-        const fixedTrialAccountId = '99999';
-        const myReferralCode = generateReferralCode();
-
-        // profiles upsert
-        const { error: upsertError } = await supabase.from('profiles').upsert(
-          {
+        // profiles にレコード作成
+        const { error: profileInsertError } = await supabase
+          .from('profiles')
+          .insert({
             id: user.id,
-            email: user.email,
-            account_id: fixedTrialAccountId,
-            trial_type: trialType,
-            referred_by_code: refCode ?? null,
-            referral_code: myReferralCode,
-            registered_at: new Date().toISOString(),
-            plan_status: 'trial',
-          },
-          {
-            onConflict: 'id',
-          }
-        );
+            email,
+            // トライアル発行時にここへ 99999 などを入れてもOK
+            account_id: accountId || null,
+            is_master: false,
+          });
 
-        if (upsertError) {
-          console.error('profiles upsert error', upsertError);
-          setErrorMessage(
-            'ユーザープロファイルの登録に失敗しました。時間をおいて再度お試しください。'
-          );
+        if (profileInsertError) {
+          console.error('profile insert error:', profileInsertError);
+          alert('プロフィールの作成に失敗しました');
           return;
         }
 
-        // Welcomeメール送信（失敗しても画面動作は止めない）
-        try {
-          await fetch('/api/send-welcome', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              email: user.email,
-              accountId: fixedTrialAccountId,
-              trialType,
-              referralCode: myReferralCode,
-            }),
-          });
-        } catch (mailError) {
-          console.error('send-welcome error', mailError);
-        }
-
-        // 新規登録後はそのまま /u へ
-        router.push('/u');
+        alert('登録が完了しました。サインインしてください。');
+        setMode('login');
       }
-    } catch (err) {
-      console.error(err);
-      setErrorMessage('処理中にエラーが発生しました');
     } finally {
       setLoading(false);
     }
   };
 
-  // ============================
-  // UI（美しめレイアウト版）
-  // ============================
   return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        // 鮮やかなグラデーション背景
-        background:
-          'linear-gradient(135deg, #ffb7c5 0%, #d8f4d8 35%, #b8e2ff 100%)',
-        padding: '24px',
-      }}
-    >
-      <div
-        style={{
-          width: '100%',
-          maxWidth: '480px',
-          borderRadius: '20px',
-          backgroundColor: '#ffffff',
-          boxShadow:
-            '0 18px 45px rgba(15, 23, 42, 0.16), 0 6px 15px rgba(15, 23, 42, 0.10)',
-          padding: '24px 24px 28px',
-          position: 'relative',
-        }}
-      >
-        {/* カード左上の「サインイン」ラベル */}
-        <div
-          style={{
-            position: 'absolute',
-            top: '14px',
-            left: '18px',
-            fontSize: '11px',
-            fontWeight: 600,
-            letterSpacing: '0.08em',
-            textTransform: 'uppercase',
-            color: '#9ca3af',
-          }}
-        >
-          サインイン
-        </div>
+    <main className="min-h-screen flex items-center justify-center bg-[#fff8f2]">
+      {/* 背景：パレットっぽい淡い色のドットを散らす */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute -top-6 left-6 w-16 h-16 rounded-full bg-[#ffd6e3] opacity-70" />
+        <div className="absolute top-10 right-10 w-20 h-20 rounded-full bg-[#ffe9a9] opacity-70" />
+        <div className="absolute bottom-10 left-10 w-24 h-24 rounded-full bg-[#cdeefc] opacity-70" />
+        <div className="absolute -bottom-8 right-6 w-16 h-16 rounded-full bg-[#d6f7d8] opacity-70" />
+      </div>
 
-        {/* タイトル部分 */}
-        <div style={{ marginTop: '18px', marginBottom: '16px' }}>
-          <h1
-            style={{
-              fontSize: '22px',
-              fontWeight: 700,
-              color: '#0f172a',
-              marginBottom: '4px',
-            }}
-          >
-            Auto post studio
-          </h1>
-          <p
-            style={{
-              fontSize: '12px',
-              color: '#6b7280',
-              lineHeight: 1.5,
-            }}
-          >
-            URL要約・画像説明生成・Chat補助をまとめてこなす、
-            SNS投稿サポートツールです。
+      <div className="relative w-full max-w-md mx-4">
+        {/* ロゴ＆キャッチ */}
+        <div className="mb-4 text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/80 shadow-sm border border-[#f3d7c5]">
+            <span className="w-3 h-3 rounded-full bg-[#ffb7c5]" />
+            <span className="w-3 h-3 rounded-full bg-[#ffe27a]" />
+            <span className="w-3 h-3 rounded-full bg-[#8fd5ff]" />
+            <span className="text-xs font-medium text-slate-700">
+              AutoPost Studio
+            </span>
+          </div>
+          <p className="mt-3 text-xs text-slate-600">
+            活動はしているのに、SNSが追いつかない。<br />
+            そんな毎日を、ちょっとカラフルに整えるツールです。
           </p>
         </div>
 
-        {/* タブ（ログイン / 新規登録） */}
-        <div
-          style={{
-            display: 'flex',
-            borderRadius: '999px',
-            backgroundColor: '#f3f4f6',
-            padding: '2px',
-            marginBottom: '18px',
-          }}
-        >
-          <button
-            type="button"
-            onClick={() => setMode('login')}
-            style={{
-              flex: 1,
-              border: 'none',
-              outline: 'none',
-              borderRadius: '999px',
-              padding: '8px 0',
-              fontSize: '13px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              backgroundColor:
-                mode === 'login' ? '#111827' : 'transparent',
-              color: mode === 'login' ? '#f9fafb' : '#6b7280',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            ログイン
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('register')}
-            style={{
-              flex: 1,
-              border: 'none',
-              outline: 'none',
-              borderRadius: '999px',
-              padding: '8px 0',
-              fontSize: '13px',
-              fontWeight: 600,
-              cursor: 'pointer',
-              backgroundColor:
-                mode === 'register' ? '#111827' : 'transparent',
-              color: mode === 'register' ? '#f9fafb' : '#6b7280',
-              transition: 'all 0.15s ease',
-            }}
-          >
-            新規登録
-          </button>
-        </div>
-
-        {/* エラーメッセージ */}
-        {errorMessage && (
-          <p
-            style={{
-              marginBottom: '12px',
-              fontSize: '12px',
-              color: '#b91c1c',
-              backgroundColor: '#fef2f2',
-              borderRadius: '8px',
-              padding: '6px 8px',
-            }}
-          >
-            {errorMessage}
-          </p>
-        )}
-
-        {/* フォーム */}
-        <form onSubmit={handleSubmit}>
-          {/* メールアドレス */}
-          <div style={{ marginBottom: '12px' }}>
-            <label
-              htmlFor="email"
-              style={{
-                display: 'block',
-                marginBottom: '4px',
-                fontSize: '12px',
-                fontWeight: 500,
-                color: '#4b5563',
-              }}
-            >
-              メールアドレス
-            </label>
-            <input
-              id="email"
-              type="email"
-              autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{
-                width: '100%',
-                borderRadius: '12px',
-                border: '1px solid #e5e7eb',
-                padding: '9px 11px',
-                fontSize: '13px',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-            />
+        {/* カード本体 */}
+        <div className="bg-white/90 rounded-2xl shadow-xl border border-[#f3d7c5] px-7 py-8">
+          {/* サインイン / 新規登録 タイトル（カード左上） */}
+          <div className="flex items-baseline justify-between mb-6">
+            <h1 className="text-lg font-semibold text-slate-900">
+              {isLogin ? 'サインイン' : '新規登録'}
+            </h1>
           </div>
 
-          {/* パスワード */}
-          <div style={{ marginBottom: '12px' }}>
-            <label
-              htmlFor="password"
-              style={{
-                display: 'block',
-                marginBottom: '4px',
-                fontSize: '12px',
-                fontWeight: 500,
-                color: '#4b5563',
-              }}
-            >
-              パスワード
-            </label>
-            <input
-              id="password"
-              type="password"
-              autoComplete={isLogin ? 'current-password' : 'new-password'}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{
-                width: '100%',
-                borderRadius: '12px',
-                border: '1px solid #e5e7eb',
-                padding: '9px 11px',
-                fontSize: '13px',
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
-
-          {/* アカウントID（ログイン時のみ） */}
-          {isLogin && (
-            <div style={{ marginBottom: '16px' }}>
-              <label
-                htmlFor="accountId"
-                style={{
-                  display: 'block',
-                  marginBottom: '4px',
-                  fontSize: '12px',
-                  fontWeight: 500,
-                  color: '#4b5563',
-                }}
-              >
-                アカウントID（5桁）
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                メールアドレス
               </label>
               <input
-                id="accountId"
-                type="text"
-                maxLength={5}
-                value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-                style={{
-                  width: '100%',
-                  borderRadius: '12px',
-                  border: '1px solid #e5e7eb',
-                  padding: '9px 11px',
-                  fontSize: '13px',
-                  outline: 'none',
-                  boxSizing: 'border-box',
-                }}
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ffb7c5]/70 focus:border-transparent bg-white"
+                autoComplete="email"
               />
             </div>
-          )}
 
-          {/* 補足テキスト */}
-          <p
-            style={{
-              fontSize: '11px',
-              color: '#9ca3af',
-              marginBottom: '10px',
-            }}
-          >
-            トライアル期間中のアカウントIDは
-            <span style={{ fontWeight: 600 }}>「99999」</span>
-            です。
-          </p>
+            <div>
+              <label className="block text-xs font-medium text-slate-700 mb-1">
+                パスワード
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ffb7c5]/70 focus:border-transparent bg-white"
+                autoComplete={isLogin ? 'current-password' : 'new-password'}
+              />
+            </div>
 
-          {/* ボタン */}
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              marginTop: '4px',
-              width: '100%',
-              borderRadius: '999px',
-              border: 'none',
-              padding: '10px 0',
-              fontSize: '14px',
-              fontWeight: 600,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              background:
-                'linear-gradient(135deg, #0f172a, #1f2937)',
-              color: '#f9fafb',
-            }}
-          >
-            {loading
-              ? '処理中...'
-              : isLogin
-              ? 'ログイン'
-              : '新規登録してはじめる'}
-          </button>
-        </form>
+            {isLogin && (
+              <div>
+                <label className="block text-xs font-medium text-slate-700 mb-1">
+                  アカウントID（5桁）
+                </label>
+                <input
+                  type="text"
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#ffe27a]/70 focus:border-transparent bg-white"
+                  maxLength={5}
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  管理者から発行された 5 桁の番号を入力してください。
+                </p>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="mt-2 w-full rounded-lg py-2.5 text-sm font-semibold text-white bg-[#ff8ba7] hover:bg-[#ff7596] disabled:opacity-70 disabled:cursor-not-allowed transition-colors shadow-md"
+            >
+              {loading
+                ? '処理中...'
+                : isLogin
+                ? 'サインインする'
+                : '登録してはじめる'}
+            </button>
+          </form>
+
+          <div className="mt-5 text-center text-xs text-slate-600">
+            {isLogin ? (
+              <>
+                まだアカウントをお持ちでない方は{' '}
+                <button
+                  type="button"
+                  onClick={() => setMode('register')}
+                  className="font-semibold text-[#ff8ba7] underline underline-offset-2"
+                >
+                  新規登録
+                </button>
+              </>
+            ) : (
+              <>
+                すでにアカウントをお持ちの方は{' '}
+                <button
+                  type="button"
+                  onClick={() => setMode('login')}
+                  className="font-semibold text-[#ff8ba7] underline underline-offset-2"
+                >
+                  サインイン
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        <p className="mt-3 text-[10px] text-center text-slate-500">
+          通常のご利用範囲を超えるアクセスが検知された場合、<br />
+          アカウントの一時停止やご連絡を行うことがあります。
+        </p>
       </div>
     </main>
   );
