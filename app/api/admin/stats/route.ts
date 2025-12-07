@@ -1,6 +1,6 @@
 // app/api/admin/stats/route.ts
 import { NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/supabaseServer';
+import { supabase } from '@/lib/supabaseClient';
 
 // フロントと合わせた種別
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
@@ -68,7 +68,7 @@ export async function GET() {
     const startIso = getStartDateFor24Months();
 
     // 24 ヶ月分の usage_logs をまとめて取得
-    const { data, error } = await supabaseAdmin
+    const { data, error } = await supabase
       .from('usage_logs')
       .select('type, created_at')
       .gte('created_at', startIso);
