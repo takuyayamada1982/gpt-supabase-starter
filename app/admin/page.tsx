@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabaseClient';
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 interface Summary {
-  month: string;
+  month: string; // "2025-12" など
   totalRequests: number;
   totalCost: number;
   countsByType: Partial<Record<UsageType, number>>;
@@ -24,9 +24,10 @@ interface MonthlyRow {
   totalCost: number | null;
 }
 
+// ← summary / monthly を optional にしておく
 interface AdminStatsResponse {
-  summary: Summary;
-  monthly: MonthlyRow[];
+  summary?: Summary;
+  monthly?: MonthlyRow[];
 }
 
 interface UserProfile {
@@ -127,16 +128,25 @@ export default function AdminPage() {
           fetch('/api/admin/users'),
         ]);
 
-        if (!statsRes.ok) throw new Error('stats API error');
-        if (!usersRes.ok) throw new Error('users API error');
+        if (!statsRes.ok) {
+          console.error('statsRes not ok:', statsRes.status);
+          throw new Error('stats API error');
+        }
+        if (!usersRes.ok) {
+          console.error('usersRes not ok:', usersRes.status);
+          throw new Error('users API error');
+        }
 
-        const statsJson: AdminStatsResponse = await statsRes.json();
-        const usersJson: AdminUsersResponse = await usersRes.json();
+        const statsJson = (await statsRes.json()) as AdminStatsResponse;
+        const usersJson = (await usersRes.json()) as AdminUsersResponse;
+
+        console.log('admin/stats raw:', statsJson);
+        console.log('admin/users raw:', usersJson);
 
         setStats(statsJson);
         setUsers(usersJson.users ?? []);
-      } catch (err) {
-        console.error(err);
+      } catch (err: any) {
+        console.error('admin fetchAll error:', err);
         setErrorMsg('管理情報の取得に失敗しました');
       } finally {
         setLoading(false);
@@ -155,89 +165,82 @@ export default function AdminPage() {
     );
   }
 
-  // 権限NG or データ取得失敗
-  if (loading || errorMsg || !stats) {
+  // 権限NG
+  if (!isMaster) {
     return (
       <FullScreenCenter>
         <span style={{ fontSize: 14, color: '#fecaca' }}>
-          {loading ? '読み込み中...' : errorMsg ?? 'データがありません'}
+          {errorMsg ?? '管理者権限がありません'}
         </span>
       </FullScreenCenter>
     );
   }
 
-  const { summary, monthly } = stats;
+  // ローディング or API失敗 or stats が取れていない
+  if (loading || !stats) {
+    return (
+      <FullScreenCenter>
+        <span style={{ fontSize: 14, color: '#cbd5f5' }}>
+          {loading ? '読み込み中...' : 'データがありません'}
+        </span>
+      </FullScreenCenter>
+    );
+  }
+  if (errorMsg) {
+    return (
+      <FullScreenCenter>
+        <span style={{ fontSize: 14, color: '#fecaca' }}>{errorMsg}</span>
+      </FullScreenCenter>
+    );
+  }
 
-  // ========= ここから「今月分の集計」をフロントで再計算する部分 =========
+  // ======== ここから安全な summary / monthly を組み立てる ========
 
-  // 対象月（例: "2025-12"）。バックエンドが空なら '—'
-  const monthLabel = summary.month || '—';
+  const summary: Summary =
+    stats.summary ?? {
+      month: '—',
+      totalRequests: 0,
+      totalCost: 0,
+      countsByType: {},
+      costsByType: {},
+    };
 
-  // users から「今月の合計料金」を再計算（下のテーブルと同じ元データ）
-  const totalCostFromUsers = (users ?? []).reduce((sum, u) => {
-    return sum + Number(u.monthly_total_cost ?? 0);
-  }, 0);
+  const monthly: MonthlyRow[] = stats.monthly ?? [];
 
-  // summary.month と一致する行だけ、料金合計を users ベースで補正した配列
-  const patchedMonthly: MonthlyRow[] = monthly.map((m) =>
-    m.month === monthLabel
-      ? { ...m, totalCost: totalCostFromUsers }
-      : m
-  );
+  // === counts / costs を安全にマッピング ===
+  const countsRaw = summary.countsByType ?? {};
+  const costsRaw = summary.costsByType ?? {};
 
-  // 「今月」の行を取得（棒グラフとKPIのベース）
-  const currentMonthly = patchedMonthly.find((m) => m.month === monthLabel);
-
-  const countsFromMonthly: Record<UsageType, number> = {
-    url: Number(currentMonthly?.urlCount ?? 0),
-    vision: Number(currentMonthly?.visionCount ?? 0),
-    chat: Number(currentMonthly?.chatCount ?? 0),
-    video: Number(currentMonthly?.videoCount ?? 0),
+  const counts: Record<UsageType, number> = {
+    url: countsRaw.url ?? 0,
+    vision: countsRaw.vision ?? 0,
+    chat: countsRaw.chat ?? 0,
+    video: (countsRaw as any).video ?? 0,
   };
 
-  // 単価（ヘッダーの表示と合わせる）
-  const unitPrice: Record<UsageType, number> = {
-    url: 0.7,
-    vision: 1.0,
-    chat: 0.3,
-    video: 20.0,
+  const costs: Record<UsageType, number> = {
+    url: costsRaw.url ?? 0,
+    vision: costsRaw.vision ?? 0,
+    chat: costsRaw.chat ?? 0,
+    video: (costsRaw as any).video ?? 0,
   };
 
-  const costsFromMonthly: Record<UsageType, number> = {
-    url: countsFromMonthly.url * unitPrice.url,
-    vision: countsFromMonthly.vision * unitPrice.vision,
-    chat: countsFromMonthly.chat * unitPrice.chat,
-    video: countsFromMonthly.video * unitPrice.video,
-  };
-
-  // KPI用の総リクエスト・総コスト（バックエンド値がゼロならフロント計算値を優先）
-  const totalRequestsCalc =
-    countsFromMonthly.url +
-    countsFromMonthly.vision +
-    countsFromMonthly.chat +
-    countsFromMonthly.video;
-
-  const summaryTotalRequests =
-    totalRequestsCalc || summary.totalRequests || 0;
-
-  const summaryTotalCost =
-    totalCostFromUsers || summary.totalCost || 0;
-
-  // 棒グラフの最大値
   const maxCount = Math.max(
-    countsFromMonthly.url,
-    countsFromMonthly.vision,
-    countsFromMonthly.chat,
-    countsFromMonthly.video,
+    counts.url,
+    counts.vision,
+    counts.chat,
+    counts.video,
     1,
   );
   const maxCost = Math.max(
-    costsFromMonthly.url,
-    costsFromMonthly.vision,
-    costsFromMonthly.chat,
-    costsFromMonthly.video,
+    costs.url,
+    costs.vision,
+    costs.chat,
+    costs.video,
     1,
   );
+
+  const monthLabel = summary.month || '—';
 
   const formatYen = (v: number) => `¥${v.toFixed(1)}`;
 
@@ -249,8 +252,6 @@ export default function AdminPage() {
   };
 
   const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
-
-  // ========= ここまで「今月分の集計」 =========
 
   return (
     <div
@@ -283,9 +284,7 @@ export default function AdminPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600 }}>
-              Admin Dashboard
-            </h1>
+            <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin Dashboard</h1>
             <p
               style={{
                 fontSize: 12,
@@ -322,11 +321,11 @@ export default function AdminPage() {
         >
           <KpiCard
             title="今月の総リクエスト"
-            value={summaryTotalRequests.toLocaleString()}
+            value={summary.totalRequests.toLocaleString()}
           />
           <KpiCard
             title="今月の推定料金"
-            value={formatYen(summaryTotalCost)}
+            value={formatYen(summary.totalCost)}
           />
           <KpiCard title="対象月" value={monthLabel} />
         </div>
@@ -343,7 +342,7 @@ export default function AdminPage() {
           <Card title="今月の利用回数（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const count = countsFromMonthly[t];
+                const count = counts[t];
                 const width = (count / maxCount) * 100;
                 return (
                   <div key={t}>
@@ -389,7 +388,7 @@ export default function AdminPage() {
           <Card title="今月の金額内訳（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const cost = costsFromMonthly[t];
+                const cost = costs[t];
                 const width = (cost / maxCost) * 100;
                 return (
                   <div key={t}>
@@ -460,7 +459,7 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {patchedMonthly.map((m) => {
+                  {monthly.map((m) => {
                     const url = Number(m.urlCount ?? 0);
                     const vis = Number(m.visionCount ?? 0);
                     const chat = Number(m.chatCount ?? 0);
