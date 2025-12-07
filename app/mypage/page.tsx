@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -44,7 +44,7 @@ export default function MyPage() {
 
       const user = authData.session.user;
 
-      // まず id で探す（基本はこちら）
+      // まず id で探す
       let { data, error } = await supabase
         .from('profiles')
         .select(
@@ -64,7 +64,7 @@ export default function MyPage() {
         .eq('id', user.id)
         .maybeSingle();
 
-      // もし見つからない / error の場合は email でフォールバック
+      // 見つからない / エラーなら email で再検索
       if ((!data || error) && user.email) {
         const { data: byEmail, error: err2 } = await supabase
           .from('profiles')
@@ -92,7 +92,8 @@ export default function MyPage() {
         console.error('fetchProfile error:', error);
         setError('プロフィール情報の取得に失敗しました。');
       } else {
-        setProfile(data as Profile);
+        // ★ TypeScript に怒られないよう unknown を挟んでキャスト
+        setProfile(data ? ((data as unknown) as Profile) : null);
       }
 
       setCheckingAuth(false);
@@ -130,7 +131,6 @@ export default function MyPage() {
     return `${REF_BASE_URL}?ref=${profile.referral_code}`;
   }, [profile?.referral_code]);
 
-  // メッセージリセット
   const resetMsg = () => {
     setMessage(null);
     setError(null);
@@ -187,9 +187,8 @@ export default function MyPage() {
         throw new Error(json.message || json.error || 'プラン変更に失敗しました。');
       }
 
-      // API 側で更新された内容をそのまま反映
       const updated: Partial<Profile> = json.profile ?? {};
-      setProfile((prev) => (prev ? { ...prev, ...updated } as Profile : prev));
+      setProfile((prev) => (prev ? ({ ...prev, ...updated } as Profile) : prev));
       setMessage(json.message || 'プランを変更しました。');
     } catch (e: any) {
       console.error(e);
@@ -522,7 +521,7 @@ export default function MyPage() {
 }
 
 // ボタン共通スタイル
-function planButtonStyle(active: boolean): React.CSSProperties {
+function planButtonStyle(active: boolean): CSSProperties {
   return {
     width: '100%',
     padding: '10px 14px',
@@ -532,6 +531,6 @@ function planButtonStyle(active: boolean): React.CSSProperties {
     color: active ? '#ffffff' : '#111827',
     fontSize: 14,
     cursor: 'pointer',
-    textAlign: 'center' as const,
+    textAlign: 'center',
   };
 }
