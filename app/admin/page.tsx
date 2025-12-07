@@ -90,7 +90,7 @@ export default function AdminPage() {
           return;
         }
 
-        // profiles は email ベースで紐付け（/u と同じ思想）
+        // profiles は email ベースで紐付け
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -130,11 +130,42 @@ export default function AdminPage() {
         if (!statsRes.ok) throw new Error('stats API error');
         if (!usersRes.ok) throw new Error('users API error');
 
-        const statsJson: AdminStatsResponse = await statsRes.json();
-        const usersJson: AdminUsersResponse = await usersRes.json();
+        const statsJson: any = await statsRes.json();
+        const usersJson: any = await usersRes.json();
 
-        setStats(statsJson);
-        setUsers(usersJson.users ?? []);
+        // ---- ここでレスポンスの形をチェック ----
+        if (
+          !statsJson ||
+          statsJson.error ||
+          !statsJson.summary ||
+          !statsJson.monthly
+        ) {
+          console.error('statsJson invalid:', statsJson);
+          throw new Error('stats JSON が不正です');
+        }
+
+        const summary = statsJson.summary;
+        const monthly = Array.isArray(statsJson.monthly)
+          ? statsJson.monthly
+          : [];
+
+        const safeStats: AdminStatsResponse = {
+          summary: {
+            month: summary.month ?? '',
+            totalRequests: Number(summary.totalRequests ?? 0),
+            totalCost: Number(summary.totalCost ?? 0),
+            countsByType: summary.countsByType ?? {},
+            costsByType: summary.costsByType ?? {},
+          },
+          monthly,
+        };
+
+        const safeUsers: UserProfile[] = Array.isArray(usersJson?.users)
+          ? (usersJson.users as UserProfile[])
+          : [];
+
+        setStats(safeStats);
+        setUsers(safeUsers);
       } catch (err) {
         console.error(err);
         setErrorMsg('管理情報の取得に失敗しました');
@@ -155,12 +186,30 @@ export default function AdminPage() {
     );
   }
 
-  // 権限NG or データ取得失敗
-  if (loading || errorMsg || !stats) {
+  // エラー表示
+  if (errorMsg) {
+    return (
+      <FullScreenCenter>
+        <span style={{ fontSize: 14, color: '#fecaca' }}>{errorMsg}</span>
+      </FullScreenCenter>
+    );
+  }
+
+  // ローディング or stats がまだ無い
+  if (loading || !stats) {
+    return (
+      <FullScreenCenter>
+        <span style={{ fontSize: 14, color: '#cbd5f5' }}>読み込み中...</span>
+      </FullScreenCenter>
+    );
+  }
+
+  // ここで summary / monthly の存在も念のためチェック
+  if (!stats.summary || !stats.monthly) {
     return (
       <FullScreenCenter>
         <span style={{ fontSize: 14, color: '#fecaca' }}>
-          {loading ? '読み込み中...' : errorMsg ?? 'データがありません'}
+          管理情報の形式が不正です（summary / monthly がありません）
         </span>
       </FullScreenCenter>
     );
@@ -245,9 +294,7 @@ export default function AdminPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600 }}>
-              Admin Dashboard
-            </h1>
+            <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin Dashboard</h1>
             <p
               style={{
                 fontSize: 12,
@@ -484,7 +531,7 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u) => {
+                  {(users ?? []).map((u) => {
                     const trialView = getTrialStatus(u);
                     const trialTypeLabel = getTrialTypeLabel(u.trial_type);
                     const planLabel = getPlanTierLabel(u.plan_tier);
