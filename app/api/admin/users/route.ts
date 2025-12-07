@@ -7,7 +7,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// 今月の開始・終了（日本時間ベースにしたければここで調整）
+// 今月の開始・終了
 function getCurrentMonthRange() {
   const now = new Date();
   const year = now.getFullYear();
@@ -42,14 +42,14 @@ interface UsageLogRow {
   cost: number | null;
 }
 
-// SSG されないように明示
+// SSGさせない
 export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     const { start, end } = getCurrentMonthRange();
 
-    // 1) プロファイル一覧（ここで account_id を必ず取得）
+    // 1) profiles 取得（アカウントIDはここ）
     const { data: profiles, error: profilesErr } = await supabase
       .from('profiles')
       .select(
@@ -75,13 +75,14 @@ export async function GET() {
       );
     }
 
-    const profileRows: UserProfileRow[] = (profiles ?? []) as UserProfileRow[];
+    // ★ 型エラー対策：unknown を経由してキャスト
+    const profileRows: UserProfileRow[] = (profiles ?? []) as unknown as UserProfileRow[];
 
     if (profileRows.length === 0) {
       return NextResponse.json({ users: [] });
     }
 
-    // 2) 今月分の usage_logs を全部取って、ユーザーごと・種別ごとに集計
+    // 2) usage_logs から今月分を取得して集計
     const { data: logs, error: logsErr } = await supabase
       .from('usage_logs')
       .select('user_id, type, cost')
@@ -96,7 +97,7 @@ export async function GET() {
       );
     }
 
-    const usageRows: UsageLogRow[] = (logs ?? []) as UsageLogRow[];
+    const usageRows: UsageLogRow[] = (logs ?? []) as unknown as UsageLogRow[];
 
     type UsageAgg = {
       url: number;
@@ -135,7 +136,7 @@ export async function GET() {
       }
     }
 
-    // 3) プロファイル + 今月の利用集計をマージして返す
+    // 3) profiles + 今月の利用集計をマージして返す
     const users = profileRows.map((p) => {
       const usage = usageByUser[p.id] ?? {
         url: 0,
@@ -148,7 +149,7 @@ export async function GET() {
       return {
         id: p.id,
         email: p.email,
-        account_id: p.account_id, // ★ここが常に profiles.account_id
+        account_id: p.account_id, // ★ Supabase の profiles.account_id をそのまま使う
         is_master: p.is_master,
         registered_at: p.registered_at,
         deleted_at: p.deleted_at,
