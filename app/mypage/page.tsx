@@ -59,7 +59,7 @@ export default function MyPage() {
             'trial_type',
             'referral_code',
             'referred_by_code',
-          ].join(','),
+          ].join(',')
         )
         .eq('id', user.id)
         .maybeSingle();
@@ -80,7 +80,7 @@ export default function MyPage() {
               'trial_type',
               'referral_code',
               'referred_by_code',
-            ].join(','),
+            ].join(',')
           )
           .eq('email', user.email)
           .maybeSingle();
@@ -92,7 +92,7 @@ export default function MyPage() {
         console.error('fetchProfile error:', error);
         setError('プロフィール情報の取得に失敗しました。');
       } else {
-        // ★ TypeScript に怒られないよう unknown を挟んでキャスト
+        // ★ TypeScript 対策で unknown を挟んでキャスト
         setProfile(data ? ((data as unknown) as Profile) : null);
       }
 
@@ -199,7 +199,7 @@ export default function MyPage() {
   };
 
   // ───────────────────────────────
-  // 紹介コード発行
+  // 紹介コード発行（create-or-get を叩く）
   // ───────────────────────────────
   const handleGenerateReferral = async () => {
     if (!profile) return;
@@ -207,17 +207,24 @@ export default function MyPage() {
     setRefLoading(true);
 
     try {
-      const res = await fetch('/api/referral/generate', {
+      const res = await fetch('/api/referral/create-or-get', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId: profile.id,
+          userEmail: profile.email ?? undefined,
+        }),
       });
+
       const json = await res.json();
 
       if (!res.ok || json.error) {
-        throw new Error(json.message || json.error || '紹介コードの生成に失敗しました。');
+        throw new Error(
+          json.message || json.error || '紹介コードの生成に失敗しました。',
+        );
       }
 
-      const code = json.referralCode as string;
+      const code = json.code as string;
       setProfile({ ...profile, referral_code: code });
       setMessage('紹介コードを発行しました。');
     } catch (e: any) {
