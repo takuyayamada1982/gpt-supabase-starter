@@ -379,7 +379,7 @@ export default function MyPage() {
               </p>
 
               <p style={{ fontSize: 12, color: '#6b7280', marginTop: 4 }}>
-                このURLを送ると、相手の無料期間が30日になります。
+                このURLを送ると、相手の無料期間が7日⇒14日になります。
               </p>
 
               <input
