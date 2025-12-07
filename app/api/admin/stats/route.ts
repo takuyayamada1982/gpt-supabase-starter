@@ -2,9 +2,15 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
+// ---- Supabase クライアント（サーバー専用） ----
+// Service Role があればそちら、無ければ anon を使うようにしておく
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
 const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
+  supabaseUrl,
+  serviceKey && serviceKey.length > 0 ? serviceKey : anonKey
 );
 
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
@@ -33,7 +39,7 @@ interface AdminUsersResponse {
   users: AdminUserResponse[];
 }
 
-// 単価（/api/admin/stats と揃える）
+// /api/admin/stats と同じ単価
 const UNIT_COST: Record<UsageType, number> = {
   url: 0.7,
   vision: 1.0,
@@ -43,12 +49,12 @@ const UNIT_COST: Record<UsageType, number> = {
 
 export async function GET() {
   try {
-    // 今月の開始 & 終了
+    // === 1. 今月の範囲（YYYY-MM-01〜翌月01） ===
     const now = new Date();
     const start = new Date(now.getFullYear(), now.getMonth(), 1);
     const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
 
-    // 1) プロファイル一覧取得
+    // === 2. profiles 一覧取得 ===
     const { data: rawProfiles, error: profileErr } = await supabase
       .from('profiles')
       .select(
@@ -57,16 +63,15 @@ export async function GET() {
 
     if (profileErr) {
       console.error('profiles error in /api/admin/users:', profileErr);
-      return NextResponse.json(
-        { error: 'db_error', message: 'profiles の取得に失敗しました' },
-        { status: 500 }
-      );
+      // クライアントを落とさないため、とりあえず空配列で返す
+      const empty: AdminUsersResponse = { users: [] };
+      return NextResponse.json(empty, { status: 200 });
     }
 
     const profileRows: UserProfileRow[] =
       ((rawProfiles ?? []) as unknown as UserProfileRow[]);
 
-    // 2) 今月分の usage_logs を取得（ユーザー別の件数集計用）
+    // === 3. 今月分 usage_logs 取得（user_id + type） ===
     const { data: rawLogs, error: logsErr } = await supabase
       .from('usage_logs')
       .select('user_id, type, created_at')
@@ -75,15 +80,13 @@ export async function GET() {
 
     if (logsErr) {
       console.error('usage_logs error in /api/admin/users:', logsErr);
-      return NextResponse.json(
-        { error: 'db_error', message: 'usage_logs の取得に失敗しました' },
-        { status: 500 }
-      );
+      const empty: AdminUsersResponse = { users: [] };
+      return NextResponse.json(empty, { status: 200 });
     }
 
     const logs = rawLogs ?? [];
 
-    // 3) user_id ごとに種別別の件数を集計
+    // === 4. user_id ごとの利用回数を集計 ===
     type UserUsageCounts = {
       url: number;
       vision: number;
@@ -94,10 +97,13 @@ export async function GET() {
     const usageByUser = new Map<string, UserUsageCounts>();
 
     for (const row of logs) {
-      const userId = row.user_id as string | null;
-      const type = row.type as UsageType;
+      const userId = (row as any).user_id as string | null;
+      const rawType = (row as any).type as string | null;
 
       if (!userId) continue;
+      if (!rawType) continue;
+
+      const type = rawType as UsageType;
       if (!['url', 'vision', 'chat', 'video'].includes(type)) continue;
 
       if (!usageByUser.has(userId)) {
@@ -107,10 +113,9 @@ export async function GET() {
       counts[type] += 1;
     }
 
-    // 4) プロファイルに今月の件数 & 料金をマージ
+    // === 5. profiles に今月の回数 + コストを載せる ===
     const users: AdminUserResponse[] = [];
 
-    // プロファイルが存在するユーザー
     for (const p of profileRows) {
       const counts = usageByUser.get(p.id) ?? {
         url: 0,
@@ -138,14 +143,13 @@ export async function GET() {
         monthly_video_count: videoCount,
         monthly_total_cost: Number(totalCost.toFixed(1)),
       });
+
+      // usageByUser から消しておけば、あとで「profiles に無い user_id」だけ拾える
+      usageByUser.delete(p.id);
     }
 
-    // 5) usage_logs には存在するが profiles に無い user_id があれば、
-    //    ダミー行として追加（合計値を揃えたい場合用）
+    // === 6. usage_logs にはいるが profiles にいない user_id を追加（あれば） ===
     for (const [userId, counts] of usageByUser.entries()) {
-      const already = users.find((u) => u.id === userId);
-      if (already) continue;
-
       const urlCount = counts.url;
       const visionCount = counts.vision;
       const chatCount = counts.chat;
@@ -175,7 +179,7 @@ export async function GET() {
       });
     }
 
-    // 6) 何かしら整列したければ、登録日の新しい順などにソート
+    // === 7. 登録日が新しい順にソート（登録日が null のものは後ろへ） ===
     users.sort((a, b) => {
       const ad = a.registered_at ? new Date(a.registered_at).getTime() : 0;
       const bd = b.registered_at ? new Date(b.registered_at).getTime() : 0;
@@ -183,13 +187,11 @@ export async function GET() {
     });
 
     const result: AdminUsersResponse = { users };
-    return NextResponse.json(result);
+    return NextResponse.json(result, { status: 200 });
   } catch (e: unknown) {
     console.error('internal error in /api/admin/users:', e);
-    const message = e instanceof Error ? e.message : 'internal error';
-    return NextResponse.json(
-      { error: 'internal_error', message },
-      { status: 500 }
-    );
+    // ここでも空配列を返す（/admin 側で「データなし」表示になるだけ）
+    const result: AdminUsersResponse = { users: [] };
+    return NextResponse.json(result, { status: 200 });
   }
 }
