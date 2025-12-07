@@ -7,6 +7,21 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// 今月の開始・終了（日本時間ベースにしたければここで調整）
+function getCurrentMonthRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+
+  const start = new Date(year, month, 1);
+  const end = new Date(year, month + 1, 1);
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+}
+
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 interface UserProfileRow {
@@ -16,28 +31,26 @@ interface UserProfileRow {
   is_master: boolean | null;
   registered_at: string | null;
   deleted_at: string | null;
-  trial_type: string | null;   // 'normal' | 'referral'
-  plan_status: string | null;  // 'trial' | 'paid'
+  trial_type: string | null;   // 'normal' | 'referral' | null
+  plan_status: string | null;  // 'trial' | 'paid' | null
   plan_tier: string | null;    // 'starter' | 'pro' | null
 }
 
-// 今月の開始・終了
-function getCurrentMonthRange() {
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
+interface UsageLogRow {
+  user_id: string;
+  type: UsageType;
+  cost: number | null;
 }
+
+// SSG されないように明示
+export const dynamic = 'force-dynamic';
 
 export async function GET() {
   try {
     const { start, end } = getCurrentMonthRange();
 
-    // 1) 全ユーザープロファイルを取得
-    const { data: profiles, error: profilesError } = await supabase
+    // 1) プロファイル一覧（ここで account_id を必ず取得）
+    const { data: profiles, error: profilesErr } = await supabase
       .from('profiles')
       .select(
         [
@@ -50,40 +63,42 @@ export async function GET() {
           'trial_type',
           'plan_status',
           'plan_tier',
-        ].join(',')
-      );
+        ].join(', ')
+      )
+      .order('registered_at', { ascending: false });
 
-    if (profilesError) {
-      console.error('profiles error:', profilesError);
+    if (profilesErr) {
+      console.error('profiles error:', profilesErr);
       return NextResponse.json(
-        { error: 'db_error', message: 'profiles の取得に失敗しました' },
+        { error: 'profiles_error', message: 'プロフィールの取得に失敗しました。' },
         { status: 500 }
       );
     }
 
-    // ★ 型の取り扱いで怒られていたので、unknown を挟んで安全にキャスト
-    const profileRows: UserProfileRow[] = (profiles ?? []) as unknown as UserProfileRow[];
+    const profileRows: UserProfileRow[] = (profiles ?? []) as UserProfileRow[];
 
     if (profileRows.length === 0) {
       return NextResponse.json({ users: [] });
     }
 
-    // 2) 今月の usage_logs をユーザー別に集計
-    const { data: logs, error: logsError } = await supabase
+    // 2) 今月分の usage_logs を全部取って、ユーザーごと・種別ごとに集計
+    const { data: logs, error: logsErr } = await supabase
       .from('usage_logs')
       .select('user_id, type, cost')
       .gte('created_at', start)
       .lt('created_at', end);
 
-    if (logsError) {
-      console.error('usage_logs error:', logsError);
+    if (logsErr) {
+      console.error('usage_logs error:', logsErr);
       return NextResponse.json(
-        { error: 'db_error', message: 'usage_logs の取得に失敗しました' },
+        { error: 'usage_logs_error', message: '利用ログの取得に失敗しました。' },
         { status: 500 }
       );
     }
 
-    type UserUsage = {
+    const usageRows: UsageLogRow[] = (logs ?? []) as UsageLogRow[];
+
+    type UsageAgg = {
       url: number;
       vision: number;
       chat: number;
@@ -91,58 +106,70 @@ export async function GET() {
       totalCost: number;
     };
 
-    const usageMap = new Map<string, UserUsage>();
+    const usageByUser: Record<string, UsageAgg> = {};
 
-    for (const row of logs ?? []) {
-      const userId = row.user_id as string;
-      if (!userId) continue;
+    for (const log of usageRows) {
+      const uid = log.user_id;
+      if (!uid) continue;
 
-      const type = row.type as UsageType;
-      const cost = Number(row.cost ?? 0);
-
-      if (!usageMap.has(userId)) {
-        usageMap.set(userId, {
+      if (!usageByUser[uid]) {
+        usageByUser[uid] = {
           url: 0,
           vision: 0,
           chat: 0,
           video: 0,
           totalCost: 0,
-        });
+        };
       }
 
-      const u = usageMap.get(userId)!;
+      const agg = usageByUser[uid];
 
-      if (type === 'url') u.url += 1;
-      if (type === 'vision') u.vision += 1;
-      if (type === 'chat') u.chat += 1;
-      if (type === 'video') u.video += 1;
-      u.totalCost += cost;
+      if (log.type === 'url') agg.url += 1;
+      else if (log.type === 'vision') agg.vision += 1;
+      else if (log.type === 'chat') agg.chat += 1;
+      else if (log.type === 'video') agg.video += 1;
+
+      const c = Number(log.cost ?? 0);
+      if (!Number.isNaN(c)) {
+        agg.totalCost += c;
+      }
     }
 
-    // 3) profiles に monthly_* をマージ
-    const usersWithUsage = profileRows.map((p) => {
-      const u = usageMap.get(p.id);
+    // 3) プロファイル + 今月の利用集計をマージして返す
+    const users = profileRows.map((p) => {
+      const usage = usageByUser[p.id] ?? {
+        url: 0,
+        vision: 0,
+        chat: 0,
+        video: 0,
+        totalCost: 0,
+      };
+
       return {
-        ...p,
-        monthly_url_count: u?.url ?? 0,
-        monthly_vision_count: u?.vision ?? 0,
-        monthly_chat_count: u?.chat ?? 0,
-        monthly_video_count: u?.video ?? 0,
-        monthly_total_cost: u ? Number(u.totalCost.toFixed(1)) : 0,
+        id: p.id,
+        email: p.email,
+        account_id: p.account_id, // ★ここが常に profiles.account_id
+        is_master: p.is_master,
+        registered_at: p.registered_at,
+        deleted_at: p.deleted_at,
+        trial_type: p.trial_type,
+        plan_status: p.plan_status,
+        plan_tier: p.plan_tier,
+        monthly_url_count: usage.url,
+        monthly_vision_count: usage.vision,
+        monthly_chat_count: usage.chat,
+        monthly_video_count: usage.video,
+        monthly_total_cost: usage.totalCost,
       };
     });
 
-    return NextResponse.json({
-      users: usersWithUsage,
-    });
-  } catch (e: unknown) {
-    console.error('internal error in /api/admin/users:', e);
-    const message = e instanceof Error ? e.message : 'internal error';
-
+    return NextResponse.json({ users });
+  } catch (e: any) {
+    console.error('API /api/admin/users error', e);
     return NextResponse.json(
       {
         error: 'internal_error',
-        message,
+        message: e?.message ?? '予期せぬエラーが発生しました。',
       },
       { status: 500 }
     );
