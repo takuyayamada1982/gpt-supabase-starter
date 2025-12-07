@@ -398,7 +398,7 @@ const { data: profile, error: profileError } = await supabase
               color: '#9ca3af',
             }}
           >
-            ※ ログイン時のみアカウントIDを使用します。
+            ※ 無料期間中で契約前のアカウントIDは99999を使用します。
             <br />
             ※ アカウントIDは契約後に払い出しされます。
           </p>
