@@ -29,6 +29,116 @@ function getMonthRange() {
 
 type VisionMode = 'image' | 'video_thumb';
 
+// ===== プラン／トライアル判定用ヘルパー =====
+
+type TrialType = 'normal' | 'referral' | null;
+type PlanStatus = 'trial' | 'paid' | null;
+type PlanTier = 'starter' | 'pro' | null;
+
+interface ProfileRow {
+  plan_status: PlanStatus;
+  plan_tier: PlanTier;
+  trial_type: TrialType;
+  registered_at: string | null;
+}
+
+// プランの「状態」
+type PlanKind = 'no_plan' | 'trial' | 'trial_expired' | 'starter' | 'pro';
+
+interface PlanState {
+  kind: PlanKind;
+  trialRemainingDays: number | null;
+  label: string;
+}
+
+function getTrialDays(trialType: TrialType): number {
+  if (trialType === 'referral') return 30;
+  if (trialType === 'normal') return 7;
+  return 0;
+}
+
+/**
+ * プロファイルから現在のプラン状態を判定
+ * - paid があれば常に優先（トライアルの残り日数は無視）
+ * - trial の場合は registered_at + trialDays で残り日数を計算
+ */
+function getPlanState(profile: ProfileRow | null): PlanState {
+  if (!profile) {
+    return {
+      kind: 'no_plan',
+      trialRemainingDays: null,
+      label: 'プラン未設定',
+    };
+  }
+
+  // 1. 有料プランが最優先
+  if (profile.plan_status === 'paid') {
+    if (profile.plan_tier === 'pro') {
+      return {
+        kind: 'pro',
+        trialRemainingDays: null,
+        label: 'Pro 契約中',
+      };
+    }
+    if (profile.plan_tier === 'starter') {
+      return {
+        kind: 'starter',
+        trialRemainingDays: null,
+        label: 'Starter 契約中',
+      };
+    }
+  }
+
+  // 2. トライアル判定
+  if (profile.plan_status === 'trial') {
+    const days = getTrialDays(profile.trial_type);
+    if (!profile.registered_at || days <= 0) {
+      return {
+        kind: 'trial',
+        trialRemainingDays: null,
+        label: '無料期間中',
+      };
+    }
+
+    const reg = new Date(profile.registered_at);
+    if (Number.isNaN(reg.getTime())) {
+      return {
+        kind: 'trial',
+        trialRemainingDays: null,
+        label: '無料期間中',
+      };
+    }
+
+    const now = new Date();
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const diffDays = Math.floor((now.getTime() - reg.getTime()) / msPerDay);
+    const remaining = days - diffDays;
+
+    if (remaining > 0) {
+      return {
+        kind: 'trial',
+        trialRemainingDays: remaining,
+        label: `無料期間中（残り${remaining}日）`,
+      };
+    }
+
+    const daysAgo = -remaining;
+    return {
+      kind: 'trial_expired',
+      trialRemainingDays: 0,
+      label: `無料期間終了（${daysAgo}日前）`,
+    };
+  }
+
+  return {
+    kind: 'no_plan',
+    trialRemainingDays: null,
+    label: 'プラン未設定',
+  };
+}
+
+// ===== メイン処理 =====
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
@@ -48,29 +158,29 @@ export async function POST(req: NextRequest) {
     if (!filePath || typeof filePath !== 'string') {
       return NextResponse.json(
         { error: 'filePath required' },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
-    // 1) プロファイル取得（動画サムネ利用可否・Trial期間起点用）
-    let profile: any = null;
+    // 1) プロファイル取得（プラン & トライアル判定用）
+    let profile: ProfileRow | null = null;
     let profileErr: any = null;
 
     if (userEmail) {
       const { data, error } = await supabase
         .from('profiles')
-        .select('plan_status, plan_tier, registered_at')
+        .select('plan_status, plan_tier, trial_type, registered_at')
         .eq('email', userEmail)
         .maybeSingle();
-      profile = data;
+      profile = (data as any) ?? null;
       profileErr = error;
     } else {
       const { data, error } = await supabase
         .from('profiles')
-        .select('plan_status, plan_tier, registered_at')
+        .select('plan_status, plan_tier, trial_type, registered_at')
         .eq('id', userId)
         .maybeSingle();
-      profile = data;
+      profile = (data as any) ?? null;
       profileErr = error;
     }
 
@@ -81,64 +191,53 @@ export async function POST(req: NextRequest) {
           error: 'profile_error',
           message: 'プロフィールの取得に失敗しました。',
         },
-        { status: 500 },
+        { status: 500 }
       );
     }
 
-    const planStatus = profile?.plan_status as
-      | 'trial'
-      | 'paid'
-      | null
-      | undefined;
-    const planTier = profile?.plan_tier as
-      | 'starter'
-      | 'pro'
-      | null
-      | undefined;
+    const plan = getPlanState(profile);
 
     // 2) 動画サムネ利用時のみ、プランチェック & 回数制限
-    if (mode === 'video_thumb') {
-      // Trial / Pro 以外は利用不可
-      const canUseVideo =
-        planStatus === 'trial' ||
-        (planStatus === 'paid' && planTier === 'pro');
+    let remainingAfter: number | undefined;
+    let maxVideoCount = 0;
 
-      if (!canUseVideo) {
-        if (planStatus === 'paid' && planTier === 'starter') {
-          return NextResponse.json(
-            {
-              error: 'plan_not_supported',
-              message:
-                '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
-            },
-            { status: 403 },
-          );
-        }
+    if (mode === 'video_thumb') {
+      // プラン別の利用可否
+      if (plan.kind === 'starter') {
+        return NextResponse.json(
+          {
+            error: 'plan_not_supported',
+            message:
+              '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
+          },
+          { status: 403 }
+        );
+      }
+
+      if (plan.kind === 'trial_expired' || plan.kind === 'no_plan') {
         return NextResponse.json(
           {
             error: 'plan_not_supported',
             message:
               '「動画からサムネを作って3種類の原稿を作る」機能は、トライアル期間中または Pro プランでご利用いただけます。',
           },
-          { status: 403 },
+          { status: 403 }
         );
       }
 
-      // Trial中: 期間中合計10回まで
-      // Pro: 1ヶ月30回まで
-      let maxVideoCount = 0;
+      // ここまで来たら trial か pro のどちらか
       let usedFrom = '';
       let usedTo = '';
 
-      if (planStatus === 'trial') {
-        maxVideoCount = 10;
+      if (plan.kind === 'trial') {
+        maxVideoCount = 10; // トライアル期間中 10回まで
         const reg = profile?.registered_at
           ? new Date(profile.registered_at)
           : null;
         usedFrom = reg ? reg.toISOString() : new Date(2000, 0, 1).toISOString();
         usedTo = new Date().toISOString();
-      } else if (planStatus === 'paid' && planTier === 'pro') {
-        maxVideoCount = 30;
+      } else if (plan.kind === 'pro') {
+        maxVideoCount = 30; // Pro は1ヶ月30回まで
         const { start, end } = getMonthRange();
         usedFrom = start;
         usedTo = end;
@@ -159,7 +258,7 @@ export async function POST(req: NextRequest) {
             error: 'usage_count_error',
             message: '動画サムネ機能の利用回数の取得に失敗しました。',
           },
-          { status: 500 },
+          { status: 500 }
         );
       }
 
@@ -168,7 +267,7 @@ export async function POST(req: NextRequest) {
 
       if (remainingBefore <= 0) {
         const msg =
-          planStatus === 'trial'
+          plan.kind === 'trial'
             ? 'トライアル期間中の「動画からサムネ＋文字生成」は 10 回までです。上限に達しました。'
             : '今月の「動画からサムネ＋文字生成」の上限回数（30回）に達しています。';
         return NextResponse.json(
@@ -176,12 +275,14 @@ export async function POST(req: NextRequest) {
             error: 'video_limit_exceeded',
             message: msg,
             remaining: 0,
-            planStatus,
-            planTier,
+            planKind: plan.kind,
           },
-          { status: 400 },
+          { status: 400 }
         );
       }
+
+      // 成功時に返すため、ここで「実行後の残り予定」をセット
+      remainingAfter = remainingBefore - 1;
     }
 
     // 3) Supabase Storage 上の画像の public URL を取得
@@ -196,7 +297,7 @@ export async function POST(req: NextRequest) {
           error: 'no_public_url',
           message: '画像ファイルのURLが取得できませんでした。',
         },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
@@ -274,40 +375,11 @@ export async function POST(req: NextRequest) {
 
     // 8) 動画モードのときだけ、残り回数も返却
     if (mode === 'video_thumb') {
-      let maxVideoCount = 0;
-      let usedFrom = '';
-      let usedTo = '';
-
-      if (planStatus === 'trial') {
-        maxVideoCount = 10;
-        const reg = profile?.registered_at
-          ? new Date(profile.registered_at)
-          : null;
-        usedFrom = reg ? reg.toISOString() : new Date(2000, 0, 1).toISOString();
-        usedTo = new Date().toISOString();
-      } else if (planStatus === 'paid' && planTier === 'pro') {
-        maxVideoCount = 30;
-        const { start, end } = getMonthRange();
-        usedFrom = start;
-        usedTo = end;
-      }
-
-      const { data: usedLogs2 } = await supabase
-        .from('usage_logs')
-        .select('id')
-        .eq('user_id', userId)
-        .eq('type', 'video')
-        .gte('created_at', usedFrom)
-        .lt('created_at', usedTo);
-
-      const usedCount2 = usedLogs2?.length ?? 0;
-      const remainingAfter = Math.max(0, maxVideoCount - usedCount2);
-
       return NextResponse.json({
         text,
         mode,
-        planStatus,
-        planTier,
+        planKind: plan.kind,
+        planLabel: plan.label,
         remaining: remainingAfter,
         maxLimit: maxVideoCount,
       });
@@ -325,7 +397,7 @@ export async function POST(req: NextRequest) {
         error: 'internal_error',
         message: e?.message ?? '予期せぬエラーが発生しました。',
       },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }
