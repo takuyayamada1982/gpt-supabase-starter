@@ -1,25 +1,39 @@
 // app/api/admin/usage-summary/route.ts
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseServer';
+import { createClient } from '@supabase/supabase-js';
 
-// 今月の YYYY-MM を計算
-function getYearMonth() {
+// サーバーサイド用 Supabase クライアント（Service Role Key 利用）
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+// 今月の開始・終了を返すヘルパー（YYYY-MM-01〜翌月01日）
+function getMonthRange() {
   const now = new Date();
-  const y = now.getFullYear();
-  const m = (now.getMonth() + 1).toString().padStart(2, '0');
-  return `${y}-${m}`;
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+
+  const start = new Date(year, month, 1);       // 今月1日
+  const end = new Date(year, month + 1, 1);     // 翌月1日
+
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+    ym: `${year}-${(month + 1).toString().padStart(2, '0')}`,
+  };
 }
 
 export async function GET() {
   try {
-    const ym = getYearMonth();
+    const { start, end, ym } = getMonthRange();
 
-    // usage_logs を集計
+    // usage_logs から今月分を取得
     const { data, error } = await supabase
       .from('usage_logs')
       .select('type, cost')
-      .gte('created_at', `${ym}-01`)
-      .lt('created_at', `${ym}-31`);
+      .gte('created_at', start)
+      .lt('created_at', end);
 
     if (error) {
       console.error('usage_logs error:', error);
@@ -29,7 +43,7 @@ export async function GET() {
       );
     }
 
-    // 集計用オブジェクト
+    // 集計用オブジェクトを初期化
     const counts: Record<string, number> = {
       url: 0,
       vision: 0,
@@ -62,15 +76,15 @@ export async function GET() {
 
     return NextResponse.json({
       summary: {
-        month: ym,
-        totalRequests,
-        totalCost,
-        countsByType: counts,
-        costsByType: costs,
+        month: ym,            // "2025-12" のような文字列
+        totalRequests,        // 今月の全リクエスト数
+        totalCost,            // 今月の合計コスト
+        countsByType: counts, // { url, vision, chat, video }
+        costsByType: costs,   // { url, vision, chat, video }
       },
     });
   } catch (e: unknown) {
-    console.error('internal error:', e);
+    console.error('internal error in /api/admin/usage-summary:', e);
 
     const message =
       e instanceof Error ? e.message : 'internal error';
