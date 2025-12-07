@@ -16,9 +16,9 @@ interface UserProfileRow {
   is_master: boolean | null;
   registered_at: string | null;
   deleted_at: string | null;
-  trial_type: string | null;
-  plan_status: string | null;
-  plan_tier: string | null;
+  trial_type: string | null;   // 'normal' | 'referral'
+  plan_status: string | null;  // 'trial' | 'paid'
+  plan_tier: string | null;    // 'starter' | 'pro' | null
 }
 
 // 今月の開始・終了
@@ -61,7 +61,8 @@ export async function GET() {
       );
     }
 
-    const profileRows: UserProfileRow[] = (profiles ?? []) as UserProfileRow[];
+    // ★ 型の取り扱いで怒られていたので、unknown を挟んで安全にキャスト
+    const profileRows: UserProfileRow[] = (profiles ?? []) as unknown as UserProfileRow[];
 
     if (profileRows.length === 0) {
       return NextResponse.json({ users: [] });
