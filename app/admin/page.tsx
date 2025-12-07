@@ -90,6 +90,7 @@ export default function AdminPage() {
           return;
         }
 
+        // profiles は email ベースで紐付け（/u と同じ思想）
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -117,7 +118,7 @@ export default function AdminPage() {
 
   // ② 管理者として認証できたら admin API を叩く
   useEffect(() => {
-    if (!isMaster) return;
+    if (!isMaster) return; // master 以外は API 呼ばない
 
     const fetchAll = async () => {
       try {
@@ -126,70 +127,16 @@ export default function AdminPage() {
           fetch('/api/admin/users'),
         ]);
 
-        // --- stats API ---
-        let safeStats: AdminStatsResponse = {
-          summary: {
-            month: '',
-            totalRequests: 0,
-            totalCost: 0,
-            countsByType: {},
-            costsByType: {},
-          },
-          monthly: [],
-        };
+        if (!statsRes.ok) throw new Error('stats API error');
+        if (!usersRes.ok) throw new Error('users API error');
 
-        try {
-          const rawText = await statsRes.text();
-          console.log('admin/stats raw:', rawText);
+        const statsJson: AdminStatsResponse = await statsRes.json();
+        const usersJson: AdminUsersResponse = await usersRes.json();
 
-          if (!statsRes.ok) {
-            console.error('statsRes not ok:', statsRes.status);
-          } else {
-            const statsJson: any = rawText ? JSON.parse(rawText) : {};
-
-            // summary / monthly があれば使う。無ければゼロで埋める。
-            const summary = statsJson.summary ?? {};
-            const monthly = Array.isArray(statsJson.monthly)
-              ? statsJson.monthly
-              : [];
-
-            safeStats = {
-              summary: {
-                month: summary.month ?? '',
-                totalRequests: Number(summary.totalRequests ?? 0),
-                totalCost: Number(summary.totalCost ?? 0),
-                countsByType: summary.countsByType ?? {},
-                costsByType: summary.costsByType ?? {},
-              },
-              monthly,
-            };
-          }
-        } catch (e) {
-          console.error('stats JSON parse error:', e);
-        }
-
-        // --- users API ---
-        let safeUsers: UserProfile[] = [];
-        try {
-          const rawText = await usersRes.text();
-          console.log('admin/users raw:', rawText);
-
-          if (!usersRes.ok) {
-            console.error('usersRes not ok:', usersRes.status);
-          } else {
-            const usersJson: any = rawText ? JSON.parse(rawText) : {};
-            safeUsers = Array.isArray(usersJson?.users)
-              ? (usersJson.users as UserProfile[])
-              : [];
-          }
-        } catch (e) {
-          console.error('users JSON parse error:', e);
-        }
-
-        setStats(safeStats);
-        setUsers(safeUsers);
+        setStats(statsJson);
+        setUsers(usersJson.users ?? []);
       } catch (err) {
-        console.error('fetchAll error:', err);
+        console.error(err);
         setErrorMsg('管理情報の取得に失敗しました');
       } finally {
         setLoading(false);
@@ -208,59 +155,89 @@ export default function AdminPage() {
     );
   }
 
-  // 権限NG
-  if (errorMsg && !stats) {
+  // 権限NG or データ取得失敗
+  if (loading || errorMsg || !stats) {
     return (
       <FullScreenCenter>
-        <span style={{ fontSize: 14, color: '#fecaca' }}>{errorMsg}</span>
-      </FullScreenCenter>
-    );
-  }
-
-  // ローディング
-  if (loading || !stats) {
-    return (
-      <FullScreenCenter>
-        <span style={{ fontSize: 14, color: '#cbd5f5' }}>読み込み中...</span>
+        <span style={{ fontSize: 14, color: '#fecaca' }}>
+          {loading ? '読み込み中...' : errorMsg ?? 'データがありません'}
+        </span>
       </FullScreenCenter>
     );
   }
 
   const { summary, monthly } = stats;
 
-  const countsRaw = summary.countsByType ?? {};
-  const costsRaw = summary.costsByType ?? {};
+  // ========= ここから「今月分の集計」をフロントで再計算する部分 =========
 
-  const counts: Record<UsageType, number> = {
-    url: countsRaw.url ?? 0,
-    vision: countsRaw.vision ?? 0,
-    chat: countsRaw.chat ?? 0,
-    video: (countsRaw as any).video ?? 0,
+  // 対象月（例: "2025-12"）。バックエンドが空なら '—'
+  const monthLabel = summary.month || '—';
+
+  // users から「今月の合計料金」を再計算（下のテーブルと同じ元データ）
+  const totalCostFromUsers = (users ?? []).reduce((sum, u) => {
+    return sum + Number(u.monthly_total_cost ?? 0);
+  }, 0);
+
+  // summary.month と一致する行だけ、料金合計を users ベースで補正した配列
+  const patchedMonthly: MonthlyRow[] = monthly.map((m) =>
+    m.month === monthLabel
+      ? { ...m, totalCost: totalCostFromUsers }
+      : m
+  );
+
+  // 「今月」の行を取得（棒グラフとKPIのベース）
+  const currentMonthly = patchedMonthly.find((m) => m.month === monthLabel);
+
+  const countsFromMonthly: Record<UsageType, number> = {
+    url: Number(currentMonthly?.urlCount ?? 0),
+    vision: Number(currentMonthly?.visionCount ?? 0),
+    chat: Number(currentMonthly?.chatCount ?? 0),
+    video: Number(currentMonthly?.videoCount ?? 0),
   };
 
-  const costs: Record<UsageType, number> = {
-    url: costsRaw.url ?? 0,
-    vision: costsRaw.vision ?? 0,
-    chat: costsRaw.chat ?? 0,
-    video: (costsRaw as any).video ?? 0,
+  // 単価（ヘッダーの表示と合わせる）
+  const unitPrice: Record<UsageType, number> = {
+    url: 0.7,
+    vision: 1.0,
+    chat: 0.3,
+    video: 20.0,
   };
 
+  const costsFromMonthly: Record<UsageType, number> = {
+    url: countsFromMonthly.url * unitPrice.url,
+    vision: countsFromMonthly.vision * unitPrice.vision,
+    chat: countsFromMonthly.chat * unitPrice.chat,
+    video: countsFromMonthly.video * unitPrice.video,
+  };
+
+  // KPI用の総リクエスト・総コスト（バックエンド値がゼロならフロント計算値を優先）
+  const totalRequestsCalc =
+    countsFromMonthly.url +
+    countsFromMonthly.vision +
+    countsFromMonthly.chat +
+    countsFromMonthly.video;
+
+  const summaryTotalRequests =
+    totalRequestsCalc || summary.totalRequests || 0;
+
+  const summaryTotalCost =
+    totalCostFromUsers || summary.totalCost || 0;
+
+  // 棒グラフの最大値
   const maxCount = Math.max(
-    counts.url,
-    counts.vision,
-    counts.chat,
-    counts.video,
+    countsFromMonthly.url,
+    countsFromMonthly.vision,
+    countsFromMonthly.chat,
+    countsFromMonthly.video,
     1,
   );
   const maxCost = Math.max(
-    costs.url,
-    costs.vision,
-    costs.chat,
-    costs.video,
+    costsFromMonthly.url,
+    costsFromMonthly.vision,
+    costsFromMonthly.chat,
+    costsFromMonthly.video,
     1,
   );
-
-  const monthLabel = summary.month || '—';
 
   const formatYen = (v: number) => `¥${v.toFixed(1)}`;
 
@@ -272,6 +249,8 @@ export default function AdminPage() {
   };
 
   const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
+
+  // ========= ここまで「今月分の集計」 =========
 
   return (
     <div
@@ -304,7 +283,9 @@ export default function AdminPage() {
           }}
         >
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 600 }}>Admin Dashboard</h1>
+            <h1 style={{ fontSize: 20, fontWeight: 600 }}>
+              Admin Dashboard
+            </h1>
             <p
               style={{
                 fontSize: 12,
@@ -341,11 +322,11 @@ export default function AdminPage() {
         >
           <KpiCard
             title="今月の総リクエスト"
-            value={summary.totalRequests.toLocaleString()}
+            value={summaryTotalRequests.toLocaleString()}
           />
           <KpiCard
             title="今月の推定料金"
-            value={formatYen(summary.totalCost)}
+            value={formatYen(summaryTotalCost)}
           />
           <KpiCard title="対象月" value={monthLabel} />
         </div>
@@ -358,10 +339,11 @@ export default function AdminPage() {
             gap: 16,
           }}
         >
+          {/* 利用回数 */}
           <Card title="今月の利用回数（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const count = counts[t];
+                const count = countsFromMonthly[t];
                 const width = (count / maxCount) * 100;
                 return (
                   <div key={t}>
@@ -403,10 +385,11 @@ export default function AdminPage() {
             </div>
           </Card>
 
+          {/* 金額内訳 */}
           <Card title="今月の金額内訳（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
-                const cost = costs[t];
+                const cost = costsFromMonthly[t];
                 const width = (cost / maxCost) * 100;
                 return (
                   <div key={t}>
@@ -477,7 +460,7 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {monthly.map((m) => {
+                  {patchedMonthly.map((m) => {
                     const url = Number(m.urlCount ?? 0);
                     const vis = Number(m.visionCount ?? 0);
                     const chat = Number(m.chatCount ?? 0);
@@ -507,7 +490,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* ユーザー一覧テーブル */}
+        {/* ユーザー一覧テーブル（プラン種別 + 利用内訳） */}
         <div style={{ marginTop: 24 }}>
           <Card title="ユーザー一覧（プラン種別・トライアル・今月の利用内訳）">
             <div
@@ -539,7 +522,7 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {(users ?? []).map((u) => {
+                  {users.map((u) => {
                     const trialView = getTrialStatus(u);
                     const trialTypeLabel = getTrialTypeLabel(u.trial_type);
                     const planLabel = getPlanTierLabel(u.plan_tier);
@@ -620,6 +603,7 @@ function formatDateYmd(value: string | null): string {
 }
 
 function getTrialStatus(user: UserProfile): TrialStatusView {
+  // 契約者なら常に「契約中」扱い
   if (user.plan_status === 'paid') {
     return {
       kind: 'paid',
@@ -645,8 +629,10 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
 
   const trialType = user.trial_type === 'referral' ? 'referral' : 'normal';
   const trialDays = trialType === 'referral' ? 30 : 7;
+
   const remaining = trialDays - diffDays;
 
+  // 無料期間終了
   if (remaining <= 0) {
     const daysAgo = -remaining;
     return {
@@ -657,6 +643,7 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
+  // まもなく終了（残り1〜3日）
   if (remaining <= 3) {
     return {
       kind: 'trial_warning',
@@ -666,6 +653,7 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
+  // 通常の無料期間中
   if (trialType === 'referral') {
     return {
       kind: 'trial_ok',
