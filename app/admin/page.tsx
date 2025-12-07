@@ -90,7 +90,6 @@ export default function AdminPage() {
           return;
         }
 
-        // profiles は email ベースで紐付け
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -118,7 +117,7 @@ export default function AdminPage() {
 
   // ② 管理者として認証できたら admin API を叩く
   useEffect(() => {
-    if (!isMaster) return; // master 以外は API 呼ばない
+    if (!isMaster) return;
 
     const fetchAll = async () => {
       try {
@@ -127,47 +126,70 @@ export default function AdminPage() {
           fetch('/api/admin/users'),
         ]);
 
-        if (!statsRes.ok) throw new Error('stats API error');
-        if (!usersRes.ok) throw new Error('users API error');
-
-        const statsJson: any = await statsRes.json();
-        const usersJson: any = await usersRes.json();
-
-        // ---- ここでレスポンスの形をチェック ----
-        if (
-          !statsJson ||
-          statsJson.error ||
-          !statsJson.summary ||
-          !statsJson.monthly
-        ) {
-          console.error('statsJson invalid:', statsJson);
-          throw new Error('stats JSON が不正です');
-        }
-
-        const summary = statsJson.summary;
-        const monthly = Array.isArray(statsJson.monthly)
-          ? statsJson.monthly
-          : [];
-
-        const safeStats: AdminStatsResponse = {
+        // --- stats API ---
+        let safeStats: AdminStatsResponse = {
           summary: {
-            month: summary.month ?? '',
-            totalRequests: Number(summary.totalRequests ?? 0),
-            totalCost: Number(summary.totalCost ?? 0),
-            countsByType: summary.countsByType ?? {},
-            costsByType: summary.costsByType ?? {},
+            month: '',
+            totalRequests: 0,
+            totalCost: 0,
+            countsByType: {},
+            costsByType: {},
           },
-          monthly,
+          monthly: [],
         };
 
-        const safeUsers: UserProfile[] = Array.isArray(usersJson?.users)
-          ? (usersJson.users as UserProfile[])
-          : [];
+        try {
+          const rawText = await statsRes.text();
+          console.log('admin/stats raw:', rawText);
+
+          if (!statsRes.ok) {
+            console.error('statsRes not ok:', statsRes.status);
+          } else {
+            const statsJson: any = rawText ? JSON.parse(rawText) : {};
+
+            // summary / monthly があれば使う。無ければゼロで埋める。
+            const summary = statsJson.summary ?? {};
+            const monthly = Array.isArray(statsJson.monthly)
+              ? statsJson.monthly
+              : [];
+
+            safeStats = {
+              summary: {
+                month: summary.month ?? '',
+                totalRequests: Number(summary.totalRequests ?? 0),
+                totalCost: Number(summary.totalCost ?? 0),
+                countsByType: summary.countsByType ?? {},
+                costsByType: summary.costsByType ?? {},
+              },
+              monthly,
+            };
+          }
+        } catch (e) {
+          console.error('stats JSON parse error:', e);
+        }
+
+        // --- users API ---
+        let safeUsers: UserProfile[] = [];
+        try {
+          const rawText = await usersRes.text();
+          console.log('admin/users raw:', rawText);
+
+          if (!usersRes.ok) {
+            console.error('usersRes not ok:', usersRes.status);
+          } else {
+            const usersJson: any = rawText ? JSON.parse(rawText) : {};
+            safeUsers = Array.isArray(usersJson?.users)
+              ? (usersJson.users as UserProfile[])
+              : [];
+          }
+        } catch (e) {
+          console.error('users JSON parse error:', e);
+        }
 
         setStats(safeStats);
         setUsers(safeUsers);
       } catch (err) {
-        console.error(err);
+        console.error('fetchAll error:', err);
         setErrorMsg('管理情報の取得に失敗しました');
       } finally {
         setLoading(false);
@@ -186,8 +208,8 @@ export default function AdminPage() {
     );
   }
 
-  // エラー表示
-  if (errorMsg) {
+  // 権限NG
+  if (errorMsg && !stats) {
     return (
       <FullScreenCenter>
         <span style={{ fontSize: 14, color: '#fecaca' }}>{errorMsg}</span>
@@ -195,7 +217,7 @@ export default function AdminPage() {
     );
   }
 
-  // ローディング or stats がまだ無い
+  // ローディング
   if (loading || !stats) {
     return (
       <FullScreenCenter>
@@ -204,20 +226,8 @@ export default function AdminPage() {
     );
   }
 
-  // ここで summary / monthly の存在も念のためチェック
-  if (!stats.summary || !stats.monthly) {
-    return (
-      <FullScreenCenter>
-        <span style={{ fontSize: 14, color: '#fecaca' }}>
-          管理情報の形式が不正です（summary / monthly がありません）
-        </span>
-      </FullScreenCenter>
-    );
-  }
-
   const { summary, monthly } = stats;
 
-  // === counts / costs を安全にマッピング ===
   const countsRaw = summary.countsByType ?? {};
   const costsRaw = summary.costsByType ?? {};
 
@@ -348,7 +358,6 @@ export default function AdminPage() {
             gap: 16,
           }}
         >
-          {/* 利用回数 */}
           <Card title="今月の利用回数（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
@@ -394,7 +403,6 @@ export default function AdminPage() {
             </div>
           </Card>
 
-          {/* 金額内訳 */}
           <Card title="今月の金額内訳（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
@@ -499,7 +507,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* ユーザー一覧テーブル（プラン種別 + 利用内訳） */}
+        {/* ユーザー一覧テーブル */}
         <div style={{ marginTop: 24 }}>
           <Card title="ユーザー一覧（プラン種別・トライアル・今月の利用内訳）">
             <div
@@ -612,7 +620,6 @@ function formatDateYmd(value: string | null): string {
 }
 
 function getTrialStatus(user: UserProfile): TrialStatusView {
-  // 契約者なら常に「契約中」扱い
   if (user.plan_status === 'paid') {
     return {
       kind: 'paid',
@@ -638,10 +645,8 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
 
   const trialType = user.trial_type === 'referral' ? 'referral' : 'normal';
   const trialDays = trialType === 'referral' ? 30 : 7;
-
   const remaining = trialDays - diffDays;
 
-  // 無料期間終了
   if (remaining <= 0) {
     const daysAgo = -remaining;
     return {
@@ -652,7 +657,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
-  // まもなく終了（残り1〜3日）
   if (remaining <= 3) {
     return {
       kind: 'trial_warning',
@@ -662,7 +666,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
-  // 通常の無料期間中
   if (trialType === 'referral') {
     return {
       kind: 'trial_ok',
