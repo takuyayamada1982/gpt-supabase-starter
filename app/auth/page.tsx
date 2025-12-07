@@ -52,14 +52,13 @@ export default function AuthPage() {
 
         const user = data.user;
 
-      // profiles からアカウントIDが一致するか確認（email + account_id でチェック）
-const { data: profile, error: profileError } = await supabase
-  .from('profiles')
-  .select('*')
-  .eq('email', user.email)       // ★ ここを id ではなく email に
-  .eq('account_id', accountId)   // ★ 入力されたアカウントID
-  .maybeSingle();
-
+        // profiles からアカウントIDが一致するか確認（email + account_id でチェック）
+        const { data: profile, error: profileError } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('email', user.email)       // ★ email で紐付け
+          .eq('account_id', accountId)   // ★ 入力されたアカウントID
+          .maybeSingle();
 
         if (profileError) {
           console.error('profileError:', profileError);
@@ -93,17 +92,39 @@ const { data: profile, error: profileError } = await supabase
 
         const user = data.user;
 
-        // profiles に最低限の情報を追加（account_id は後から admin で付与する想定）
-        const { error: insertError } = await supabase.from('profiles').insert({
-          id: user.id,
-          email: user.email,
-        });
+        // profiles に最低限の情報を追加しつつ、account_id = '99999' を登録
+        const { error: upsertError } = await supabase
+          .from('profiles')
+          .upsert(
+            {
+              id: user.id,
+              email: user.email,
+              account_id: '99999', // ★ 無料期間中の共通アカウントID
+            },
+            {
+              onConflict: 'id',
+            }
+          );
 
-        if (insertError) {
-          console.warn('profiles insert error:', insertError.message);
+        if (upsertError) {
+          console.warn('profiles upsert error:', upsertError.message);
+          setErrorMsg('プロフィール情報の登録に失敗しました。');
+          return;
         }
 
-        router.push('/u');
+        // メッセージ表示 → ログイン画面に切り替え
+        alert(
+          '新規アカウントが発行されました。\n\n' +
+            '無料期間中のアカウントIDは「99999」をお使いください。\n' +
+            'ログイン画面で「メールアドレス」「パスワード」と合わせて入力してください。'
+        );
+
+        // ログインモードへ切り替え & 99999 をプリセット
+        setMode('login');
+        setAccountId('99999');
+        // email / password はそのまま残しておくと、すぐにログインしやすい
+
+        return;
       }
     } catch (err) {
       console.error('unexpected error:', err);
