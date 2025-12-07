@@ -1,197 +1,196 @@
-// app/api/admin/users/route.ts
+// app/api/admin/stats/route.ts
 import { NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { supabaseAdmin } from '@/lib/supabaseServer';
 
-// ---- Supabase クライアント（サーバー専用） ----
-// Service Role があればそちら、無ければ anon を使うようにしておく
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-const supabase = createClient(
-  supabaseUrl,
-  serviceKey && serviceKey.length > 0 ? serviceKey : anonKey
-);
-
+// フロントと合わせた種別
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
-interface UserProfileRow {
-  id: string;
-  email: string | null;
-  account_id: string | null;
-  is_master: boolean | null;
-  registered_at: string | null;
-  deleted_at: string | null;
-  trial_type: string | null;   // 'normal' | 'referral' | null
-  plan_status: string | null;  // 'trial' | 'paid' | null
-  plan_tier: string | null;    // 'starter' | 'pro' | null
+interface Summary {
+  month: string; // "2025-12"
+  totalRequests: number;
+  totalCost: number;
+  countsByType: Partial<Record<UsageType, number>>;
+  costsByType: Partial<Record<UsageType, number>>;
 }
 
-interface AdminUserResponse extends UserProfileRow {
-  monthly_url_count: number | null;
-  monthly_vision_count: number | null;
-  monthly_chat_count: number | null;
-  monthly_video_count: number | null;
-  monthly_total_cost: number | null;
+interface MonthlyRow {
+  month: string; // "YYYY-MM"
+  urlCount: number | null;
+  visionCount: number | null;
+  chatCount: number | null;
+  videoCount: number | null;
+  totalCost: number | null;
 }
 
-interface AdminUsersResponse {
-  users: AdminUserResponse[];
+// usage_logs から取る列
+interface UsageLogRow {
+  type: UsageType | null;
+  created_at: string | null;
 }
 
-// /api/admin/stats と同じ単価
-const UNIT_COST: Record<UsageType, number> = {
+// 単価（フロントの表示と合わせる）
+const PRICE: Record<UsageType, number> = {
   url: 0.7,
   vision: 1.0,
   chat: 0.3,
-  video: 20.0,
+  video: 20,
 };
+
+// "2025-12" のようなキーを作る
+function toMonthKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = (date.getMonth() + 1).toString().padStart(2, '0');
+  return `${y}-${m}`;
+}
+
+// 24 ヶ月分のキー配列（新しい順で返す）
+function buildLast24Months(): string[] {
+  const now = new Date();
+  const list: string[] = [];
+  // 現在月から過去 23 ヶ月
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    list.push(toMonthKey(d));
+  }
+  return list;
+}
+
+// 24 ヶ月分の先頭日を出す（クエリの開始日用：一番古い月の 1 日）
+function getStartDateFor24Months(): string {
+  const now = new Date();
+  const oldest = new Date(now.getFullYear(), now.getMonth() - 23, 1);
+  return oldest.toISOString();
+}
 
 export async function GET() {
   try {
-    // === 1. 今月の範囲（YYYY-MM-01〜翌月01） ===
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), 1);
-    const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    const monthKeys = buildLast24Months(); // [ "2025-12", "2025-11", ... ]
+    const startIso = getStartDateFor24Months();
 
-    // === 2. profiles 一覧取得 ===
-    const { data: rawProfiles, error: profileErr } = await supabase
-      .from('profiles')
-      .select(
-        'id, email, account_id, is_master, registered_at, deleted_at, trial_type, plan_status, plan_tier'
-      );
-
-    if (profileErr) {
-      console.error('profiles error in /api/admin/users:', profileErr);
-      // クライアントを落とさないため、とりあえず空配列で返す
-      const empty: AdminUsersResponse = { users: [] };
-      return NextResponse.json(empty, { status: 200 });
-    }
-
-    const profileRows: UserProfileRow[] =
-      ((rawProfiles ?? []) as unknown as UserProfileRow[]);
-
-    // === 3. 今月分 usage_logs 取得（user_id + type） ===
-    const { data: rawLogs, error: logsErr } = await supabase
+    // 24 ヶ月分の usage_logs をまとめて取得
+    const { data, error } = await supabaseAdmin
       .from('usage_logs')
-      .select('user_id, type, created_at')
-      .gte('created_at', start.toISOString())
-      .lt('created_at', end.toISOString());
+      .select('type, created_at')
+      .gte('created_at', startIso);
 
-    if (logsErr) {
-      console.error('usage_logs error in /api/admin/users:', logsErr);
-      const empty: AdminUsersResponse = { users: [] };
-      return NextResponse.json(empty, { status: 200 });
+    if (error) {
+      console.error('[admin/stats] supabase error:', error);
+      return NextResponse.json(
+        { error: 'supabase_error', message: error.message },
+        { status: 500 },
+      );
     }
 
-    const logs = rawLogs ?? [];
+    const logs = (data ?? []) as UsageLogRow[];
 
-    // === 4. user_id ごとの利用回数を集計 ===
-    type UserUsageCounts = {
-      url: number;
-      vision: number;
-      chat: number;
-      video: number;
-    };
+    // 月 × 種別 のカウンタ
+    const monthTypeCounts: Record<
+      string,
+      Partial<Record<UsageType, number>>
+    > = {};
 
-    const usageByUser = new Map<string, UserUsageCounts>();
+    // 初期化（24 ヶ月ぶん全部 0 で作っておく）
+    for (const key of monthKeys) {
+      monthTypeCounts[key] = { url: 0, vision: 0, chat: 0, video: 0 };
+    }
 
+    // ログを集計
     for (const row of logs) {
-      const userId = (row as any).user_id as string | null;
-      const rawType = (row as any).type as string | null;
+      if (!row.created_at || !row.type) continue;
+      const d = new Date(row.created_at);
+      const key = toMonthKey(d);
 
-      if (!userId) continue;
-      if (!rawType) continue;
+      // 24 ヶ月の範囲外ならスキップ
+      if (!monthKeys.includes(key)) continue;
 
-      const type = rawType as UsageType;
-      if (!['url', 'vision', 'chat', 'video'].includes(type)) continue;
-
-      if (!usageByUser.has(userId)) {
-        usageByUser.set(userId, { url: 0, vision: 0, chat: 0, video: 0 });
-      }
-      const counts = usageByUser.get(userId)!;
-      counts[type] += 1;
-    }
-
-    // === 5. profiles に今月の回数 + コストを載せる ===
-    const users: AdminUserResponse[] = [];
-
-    for (const p of profileRows) {
-      const counts = usageByUser.get(p.id) ?? {
+      const t = row.type as UsageType;
+      const bucket = monthTypeCounts[key] ?? {
         url: 0,
         vision: 0,
         chat: 0,
         video: 0,
       };
-
-      const urlCount = counts.url;
-      const visionCount = counts.vision;
-      const chatCount = counts.chat;
-      const videoCount = counts.video;
-
-      const totalCost =
-        urlCount * UNIT_COST.url +
-        visionCount * UNIT_COST.vision +
-        chatCount * UNIT_COST.chat +
-        videoCount * UNIT_COST.video;
-
-      users.push({
-        ...p,
-        monthly_url_count: urlCount,
-        monthly_vision_count: visionCount,
-        monthly_chat_count: chatCount,
-        monthly_video_count: videoCount,
-        monthly_total_cost: Number(totalCost.toFixed(1)),
-      });
-
-      // usageByUser から消しておけば、あとで「profiles に無い user_id」だけ拾える
-      usageByUser.delete(p.id);
+      bucket[t] = (bucket[t] ?? 0) + 1;
+      monthTypeCounts[key] = bucket;
     }
 
-    // === 6. usage_logs にはいるが profiles にいない user_id を追加（あれば） ===
-    for (const [userId, counts] of usageByUser.entries()) {
-      const urlCount = counts.url;
-      const visionCount = counts.vision;
-      const chatCount = counts.chat;
-      const videoCount = counts.video;
+    // ===== current month summary を作成 =====
+    const currentMonthKey = monthKeys[0]; // buildLast24Months の先頭 = 今月
+    const currentCounts = monthTypeCounts[currentMonthKey] ?? {};
 
-      const totalCost =
-        urlCount * UNIT_COST.url +
-        visionCount * UNIT_COST.vision +
-        chatCount * UNIT_COST.chat +
-        videoCount * UNIT_COST.video;
+    const countsByType: Partial<Record<UsageType, number>> = {
+      url: currentCounts.url ?? 0,
+      vision: currentCounts.vision ?? 0,
+      chat: currentCounts.chat ?? 0,
+      video: currentCounts.video ?? 0,
+    };
 
-      users.push({
-        id: userId,
-        email: null,
-        account_id: null,
-        is_master: false,
-        registered_at: null,
-        deleted_at: null,
-        trial_type: null,
-        plan_status: null,
-        plan_tier: null,
-        monthly_url_count: urlCount,
-        monthly_vision_count: visionCount,
-        monthly_chat_count: chatCount,
-        monthly_video_count: videoCount,
-        monthly_total_cost: Number(totalCost.toFixed(1)),
-      });
-    }
+    const costsByType: Partial<Record<UsageType, number>> = {
+      url: (countsByType.url ?? 0) * PRICE.url,
+      vision: (countsByType.vision ?? 0) * PRICE.vision,
+      chat: (countsByType.chat ?? 0) * PRICE.chat,
+      video: (countsByType.video ?? 0) * PRICE.video,
+    };
 
-    // === 7. 登録日が新しい順にソート（登録日が null のものは後ろへ） ===
-    users.sort((a, b) => {
-      const ad = a.registered_at ? new Date(a.registered_at).getTime() : 0;
-      const bd = b.registered_at ? new Date(b.registered_at).getTime() : 0;
-      return bd - ad;
+    const totalRequests =
+      (countsByType.url ?? 0) +
+      (countsByType.vision ?? 0) +
+      (countsByType.chat ?? 0) +
+      (countsByType.video ?? 0);
+
+    const totalCost =
+      (costsByType.url ?? 0) +
+      (costsByType.vision ?? 0) +
+      (costsByType.chat ?? 0) +
+      (costsByType.video ?? 0);
+
+    const summary: Summary = {
+      month: currentMonthKey,
+      totalRequests,
+      totalCost,
+      countsByType,
+      costsByType,
+    };
+
+    // ===== 月別一覧（24 ヶ月ぶん）を作成 =====
+    const monthly: MonthlyRow[] = monthKeys.map((key) => {
+      const c = monthTypeCounts[key] ?? {};
+      const url = c.url ?? 0;
+      const vision = c.vision ?? 0;
+      const chat = c.chat ?? 0;
+      const video = c.video ?? 0;
+      const cost =
+        url * PRICE.url +
+        vision * PRICE.vision +
+        chat * PRICE.chat +
+        video * PRICE.video;
+
+      return {
+        month: key,
+        urlCount: url,
+        visionCount: vision,
+        chatCount: chat,
+        videoCount: video,
+        totalCost: cost,
+      };
     });
 
-    const result: AdminUsersResponse = { users };
-    return NextResponse.json(result, { status: 200 });
-  } catch (e: unknown) {
-    console.error('internal error in /api/admin/users:', e);
-    // ここでも空配列を返す（/admin 側で「データなし」表示になるだけ）
-    const result: AdminUsersResponse = { users: [] };
-    return NextResponse.json(result, { status: 200 });
+    // フロントの期待する形
+    return NextResponse.json(
+      {
+        summary,
+        monthly,
+      },
+      { status: 200 },
+    );
+  } catch (e: any) {
+    console.error('[admin/stats] unexpected error:', e);
+    return NextResponse.json(
+      {
+        error: 'internal_error',
+        message: e?.message ?? 'unknown error',
+      },
+      { status: 500 },
+    );
   }
 }
