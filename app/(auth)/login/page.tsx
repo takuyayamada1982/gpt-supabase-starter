@@ -351,7 +351,7 @@ export default function AuthPage() {
         <p style={loginStyles.footnote}>
           ※ ログイン時のみアカウントIDを使用します。
           <br />
-          ※ アカウントIDは管理画面（admin）から後から付与・変更できます。
+          ※ アカウントIDは契約後付与いたします。
         </p>
 
       </section>
