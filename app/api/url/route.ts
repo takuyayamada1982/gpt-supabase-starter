@@ -12,6 +12,9 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// URL要約 1回あたりの原価（円）
+const URL_COST_YEN = 0.7;
+
 // HTML からタグをざっくり削ってプレーンテキスト化する簡易関数
 function htmlToText(html: string): string {
   // スクリプト・スタイルを削除
@@ -95,17 +98,15 @@ export async function POST(req: NextRequest) {
     // usage ログ（type = 'url'）：userId があるときだけ保存
     const usage: any = (ai as any).usage;
     if (userId && usage) {
-      const totalTokens = usage.total_tokens ?? 0;
-      const cost = totalTokens * 0.007; // ← 0.7円/回想定（1トークン0.007円）
-
       await supabase.from('usage_logs').insert({
         user_id: userId,
         model: (ai as any).model ?? 'gpt-4.1-mini',
         type: 'url',
         prompt_tokens: usage.prompt_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? 0,
-        total_tokens: totalTokens,
-        cost, // ★追加
+        total_tokens: usage.total_tokens ?? 0,
+        // ここを「毎回 0.7 円」に固定
+        cost: URL_COST_YEN,
       });
     }
 
@@ -125,6 +126,7 @@ export async function POST(req: NextRequest) {
       parsed = JSON.parse(raw);
     } catch (e) {
       console.error('Failed to parse JSON from OpenAI:', raw);
+      // JSON で返ってこなかった場合は、全文を summary に入れて返す
       return NextResponse.json({
         summary: raw,
         titles: [],
