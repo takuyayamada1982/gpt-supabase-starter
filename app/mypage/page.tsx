@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-// profiles テーブルの主なカラム
 type Profile = {
   id: string;
   email: string | null;
@@ -18,7 +17,24 @@ type Profile = {
   referred_by_code: string | null;
 };
 
-const REF_BASE_URL = 'https://gpt-supabase-starter.vercel.app/auth';
+// ※あなたの環境に合わせてOK（今のままでも動く）
+// /auth 側が ref を受け取るので、ここも /auth に合わせる
+const REF_BASE_URL =
+  process.env.NEXT_PUBLIC_APP_BASE_URL
+    ? `${process.env.NEXT_PUBLIC_APP_BASE_URL}/auth`
+    : 'https://gpt-supabase-starter.vercel.app/auth';
+
+// JSON安全パース（Unexpected end of JSON input 対策）
+async function safeJson(res: Response): Promise<any> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    // HTML が返ってきた等
+    return { error: 'invalid_json', raw: text.slice(0, 300) };
+  }
+}
 
 export default function MyPage() {
   const router = useRouter();
@@ -31,9 +47,12 @@ export default function MyPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // ───────────────────────────────
-  // 認証 & プロフィール取得
-  // ───────────────────────────────
+  const resetMsg = () => {
+    setMessage(null);
+    setError(null);
+  };
+
+  // 認証 & プロフィール取得（id → email フォールバック）
   useEffect(() => {
     const fetchProfile = async () => {
       const { data: authData } = await supabase.auth.getSession();
@@ -44,55 +63,42 @@ export default function MyPage() {
 
       const user = authData.session.user;
 
-      // まず id で探す
+      const cols = [
+        'id',
+        'email',
+        'registered_at',
+        'plan_status',
+        'plan_tier',
+        'plan_valid_until',
+        'is_canceled',
+        'trial_type',
+        'referral_code',
+        'referred_by_code',
+      ].join(',');
+
+      // まず id
       let { data, error } = await supabase
         .from('profiles')
-        .select(
-          [
-            'id',
-            'email',
-            'registered_at',
-            'plan_status',
-            'plan_tier',
-            'plan_valid_until',
-            'is_canceled',
-            'trial_type',
-            'referral_code',
-            'referred_by_code',
-          ].join(',')
-        )
+        .select(cols)
         .eq('id', user.id)
         .maybeSingle();
 
-      // 見つからない / エラーなら email で再検索
+      // 見つからない/エラーなら email
       if ((!data || error) && user.email) {
-        const { data: byEmail, error: err2 } = await supabase
+        const byEmail = await supabase
           .from('profiles')
-          .select(
-            [
-              'id',
-              'email',
-              'registered_at',
-              'plan_status',
-              'plan_tier',
-              'plan_valid_until',
-              'is_canceled',
-              'trial_type',
-              'referral_code',
-              'referred_by_code',
-            ].join(',')
-          )
+          .select(cols)
           .eq('email', user.email)
           .maybeSingle();
-        data = byEmail;
-        error = err2;
+        data = byEmail.data;
+        error = byEmail.error;
       }
 
       if (error) {
         console.error('fetchProfile error:', error);
         setError('プロフィール情報の取得に失敗しました。');
+        setProfile(null);
       } else {
-        // ★ TypeScript 対策で unknown を挟んでキャスト
         setProfile(data ? ((data as unknown) as Profile) : null);
       }
 
@@ -102,9 +108,7 @@ export default function MyPage() {
     fetchProfile();
   }, [router]);
 
-  // ───────────────────────────────
   // 表示用：残り日数
-  // ───────────────────────────────
   const remainingDays = useMemo(() => {
     if (!profile?.plan_valid_until) return null;
     const now = new Date();
@@ -128,17 +132,10 @@ export default function MyPage() {
   // 表示用：紹介URL
   const referralUrl = useMemo(() => {
     if (!profile?.referral_code) return '';
-    return `${REF_BASE_URL}?ref=${profile.referral_code}`;
+    return `${REF_BASE_URL}?ref=${encodeURIComponent(profile.referral_code)}`;
   }, [profile?.referral_code]);
 
-  const resetMsg = () => {
-    setMessage(null);
-    setError(null);
-  };
-
-  // ───────────────────────────────
-  // 解約ボタン
-  // ───────────────────────────────
+  // 解約
   const handleCancel = async () => {
     if (!profile) return;
     const ok = window.confirm('本当に解約しますか？');
@@ -162,9 +159,7 @@ export default function MyPage() {
     setLoading(false);
   };
 
-  // ───────────────────────────────
-  // プラン変更ボタン
-  // ───────────────────────────────
+  // プラン変更（既存のAPI前提。UI変更なし）
   type PlanAction =
     | 'trial_to_starter'
     | 'trial_to_pro'
@@ -182,7 +177,8 @@ export default function MyPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action }),
       });
-      const json = await res.json();
+
+      const json = await safeJson(res);
       if (!res.ok || json.error) {
         throw new Error(json.message || json.error || 'プラン変更に失敗しました。');
       }
@@ -198,9 +194,7 @@ export default function MyPage() {
     }
   };
 
-  // ───────────────────────────────
-  // 紹介コード発行（create-or-get を叩く）
-  // ───────────────────────────────
+  // 紹介コード発行（既存 /api/referral/create-or-get を使う）
   const handleGenerateReferral = async () => {
     if (!profile) return;
     resetMsg();
@@ -212,11 +206,11 @@ export default function MyPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           userId: profile.id,
-          userEmail: profile.email ?? undefined,
+          userEmail: profile.email,
         }),
       });
 
-      const json = await res.json();
+      const json = await safeJson(res);
 
       if (!res.ok || json.error) {
         throw new Error(
@@ -224,7 +218,9 @@ export default function MyPage() {
         );
       }
 
-      const code = json.code as string;
+      const code = (json.code as string) || '';
+      if (!code) throw new Error('紹介コードが取得できませんでした。');
+
       setProfile({ ...profile, referral_code: code });
       setMessage('紹介コードを発行しました。');
     } catch (e: any) {
@@ -235,9 +231,6 @@ export default function MyPage() {
     }
   };
 
-  // ───────────────────────────────
-  // 表示
-  // ───────────────────────────────
   if (checkingAuth) {
     return (
       <div
@@ -246,8 +239,7 @@ export default function MyPage() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          fontFamily:
-            'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
         }}
       >
         ログイン状態を確認中…
@@ -260,8 +252,7 @@ export default function MyPage() {
       style={{
         minHeight: '100vh',
         padding: 16,
-        fontFamily:
-          'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
+        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
         backgroundColor: '#f3f4f6',
       }}
     >
@@ -276,21 +267,10 @@ export default function MyPage() {
           }}
         >
           <div>
-            <h1
-              style={{
-                fontSize: 22,
-                fontWeight: 700,
-                marginBottom: 4,
-              }}
-            >
+            <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
               マイページ
             </h1>
-            <p
-              style={{
-                fontSize: 13,
-                color: '#6b7280',
-              }}
-            >
+            <p style={{ fontSize: 13, color: '#6b7280' }}>
               ご契約状況とプラン変更・紹介コードの確認ができます。
             </p>
           </div>
@@ -320,13 +300,7 @@ export default function MyPage() {
             marginBottom: 16,
           }}
         >
-          <p
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              marginBottom: 8,
-            }}
-          >
+          <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
             契約状況
           </p>
 
@@ -337,8 +311,7 @@ export default function MyPage() {
             現在のプラン： {planLabel}
           </p>
           <p style={{ fontSize: 13, marginBottom: 4 }}>
-            契約終了日：
-            {profile?.plan_valid_until ?? '未設定'}
+            契約終了日：{profile?.plan_valid_until ?? '未設定'}
           </p>
           <p style={{ fontSize: 13, marginBottom: 8 }}>
             解約状態：{profile?.is_canceled ? '解約手続き済み' : '利用中'}
@@ -353,15 +326,8 @@ export default function MyPage() {
             </p>
           )}
 
-          <p
-            style={{
-              fontSize: 12,
-              color: '#6b7280',
-              marginBottom: 12,
-            }}
-          >
-            解約後も、契約終了日まではサービスを利用できます。
-            契約終了日を過ぎるとログインができなくなります。
+          <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
+            解約後も、契約終了日まではサービスを利用できます。契約終了日を過ぎるとログインができなくなります。
           </p>
 
           <button
@@ -375,8 +341,7 @@ export default function MyPage() {
               color: '#ffffff',
               fontSize: 14,
               fontWeight: 600,
-              cursor:
-                loading || profile?.is_canceled ? 'not-allowed' : 'pointer',
+              cursor: loading || profile?.is_canceled ? 'not-allowed' : 'pointer',
             }}
           >
             {profile?.is_canceled ? '解約済み' : '解約手続きをする'}
@@ -393,13 +358,7 @@ export default function MyPage() {
             marginBottom: 16,
           }}
         >
-          <p
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              marginBottom: 8,
-            }}
-          >
+          <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
             プラン変更
           </p>
 
@@ -448,13 +407,7 @@ export default function MyPage() {
             marginBottom: 16,
           }}
         >
-          <p
-            style={{
-              fontSize: 13,
-              fontWeight: 600,
-              marginBottom: 8,
-            }}
-          >
+          <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
             紹介コード
           </p>
 
@@ -470,13 +423,7 @@ export default function MyPage() {
               </p>
             </>
           ) : (
-            <p
-              style={{
-                fontSize: 12,
-                color: '#6b7280',
-                marginBottom: 8,
-              }}
-            >
+            <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
               紹介コードはまだ発行されていません。下のボタンから生成できます。
             </p>
           )}
@@ -499,26 +446,14 @@ export default function MyPage() {
           </button>
         </section>
 
-        {/* メッセージ表示 */}
+        {/* メッセージ */}
         {message && (
-          <p
-            style={{
-              marginTop: 4,
-              fontSize: 12,
-              color: '#15803d',
-            }}
-          >
+          <p style={{ marginTop: 4, fontSize: 12, color: '#15803d' }}>
             {message}
           </p>
         )}
         {error && (
-          <p
-            style={{
-              marginTop: 4,
-              fontSize: 12,
-              color: '#b91c1c',
-            }}
-          >
+          <p style={{ marginTop: 4, fontSize: 12, color: '#b91c1c' }}>
             {error}
           </p>
         )}
@@ -527,7 +462,6 @@ export default function MyPage() {
   );
 }
 
-// ボタン共通スタイル
 function planButtonStyle(active: boolean): CSSProperties {
   return {
     width: '100%',
