@@ -1,16 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  supabase,
-  fetchProfileByIdOrEmail,
-} from '../../_shared/profile';
+import { supabase, fetchProfileByIdOrEmail } from '../../_shared/profile';
 
-// 6桁の英数字大文字コードを作る
 function generateCode(length = 6): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
   let result = '';
-  for (let i = 0; i < length; i += 1) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
+  for (let i = 0; i < length; i += 1) result += chars.charAt(Math.floor(Math.random() * chars.length));
   return result;
 }
 
@@ -19,34 +13,25 @@ const APP_BASE_URL =
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as {
-      userId?: string;
-      userEmail?: string;
-    };
-
+    // ✅ 空ボディ対策（Unexpected end of JSON input を潰す）
+    const raw = await req.text();
+    const body = raw ? (JSON.parse(raw) as { userId?: string; userEmail?: string }) : {};
     const { userId, userEmail } = body;
 
-    const { profile, error } = await fetchProfileByIdOrEmail({
-      userId,
-      userEmail,
-    });
-
+    const { profile, error } = await fetchProfileByIdOrEmail({ userId, userEmail });
     if (error) return NextResponse.json({ error }, { status: 500 });
-    if (!profile) {
-      return NextResponse.json({ error: 'profile_not_found' }, { status: 404 });
-    }
+    if (!profile) return NextResponse.json({ error: 'profile_not_found' }, { status: 404 });
 
-    // ✅ まず profiles.referral_code があればそれを最優先（表示との整合）
-    // これがあれば referral_codes に触らず返してOK（最小）
-    if ((profile as any).referral_code) {
-      const code = String((profile as any).referral_code);
+    // ✅ profiles.referral_code があれば最優先（マイページ表示と一致）
+    const profReferral = (profile as any).referral_code;
+    if (profReferral) {
+      const code = String(profReferral);
       const url = `${APP_BASE_URL}/auth?ref=${encodeURIComponent(code)}`;
       return NextResponse.json({ ok: true, code, url });
     }
 
-    // 既に referral_codes に有効コードがあれば再利用
+    // referral_codes に既存があれば再利用
     let code = '';
-
     const { data: existingCodes, error: codeErr } = await supabase
       .from('referral_codes')
       .select('code')
@@ -54,9 +39,7 @@ export async function POST(req: NextRequest) {
       .eq('is_active', true)
       .limit(1);
 
-    if (!codeErr && existingCodes && existingCodes.length > 0) {
-      code = existingCodes[0].code;
-    }
+    if (!codeErr && existingCodes?.length) code = existingCodes[0].code;
 
     // なければ新規発行
     if (!code) {
@@ -83,11 +66,7 @@ export async function POST(req: NextRequest) {
 
       const { data: inserted, error: insertErr } = await supabase
         .from('referral_codes')
-        .insert({
-          owner_user_id: profile.id,
-          code: newCode,
-          is_active: true,
-        })
+        .insert({ owner_user_id: profile.id, code: newCode, is_active: true })
         .select('code')
         .limit(1);
 
@@ -99,20 +78,15 @@ export async function POST(req: NextRequest) {
       code = inserted?.[0]?.code ?? '';
     }
 
-    if (!code) {
-      return NextResponse.json({ error: 'referral_code_missing' }, { status: 500 });
-    }
+    if (!code) return NextResponse.json({ error: 'referral_code_missing' }, { status: 500 });
 
-    // ✅ 最小修正：profiles.referral_code にも保存（マイページ表示がNULLにならない）
+    // ✅ 最小修正：profiles.referral_code にも保存（表示NULLを防ぐ）
     const { error: profUpdateErr } = await supabase
       .from('profiles')
       .update({ referral_code: code })
       .eq('id', profile.id);
 
-    if (profUpdateErr) {
-      // 表示用途なので、失敗してもAPI自体は成功として返す（最小・壊さない）
-      console.warn('profiles.referral_code update failed:', profUpdateErr);
-    }
+    if (profUpdateErr) console.warn('profiles.referral_code update failed:', profUpdateErr);
 
     const url = `${APP_BASE_URL}/auth?ref=${encodeURIComponent(code)}`;
     return NextResponse.json({ ok: true, code, url });
