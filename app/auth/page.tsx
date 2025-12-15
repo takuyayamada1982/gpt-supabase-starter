@@ -1,49 +1,36 @@
 'use client';
 
-export const dynamic = 'force-dynamic';
-
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
 type Mode = 'login' | 'register';
 
-export default function AuthPage() {
+function AuthInner() {
   const router = useRouter();
-  const sp = useSearchParams();
+  const searchParams = useSearchParams();
+
+  // ✅ /auth?ref=XXXXXX を拾う（画面は変えない）
+  const refCode = useMemo(() => searchParams.get('ref') || '', [searchParams]);
 
   const [mode, setMode] = useState<Mode>('login');
-
   const [email, setEmail] = useState('');
-  const [accountId, setAccountId] = useState(''); // ログイン時のみ
+  const [accountId, setAccountId] = useState(''); // ログイン時のみ使用
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
-
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 新規登録完了メッセージ表示用（ページを挟む）
-  const [registerDone, setRegisterDone] = useState(false);
-
   const isLogin = mode === 'login';
-
-  const refCode = useMemo(() => {
-    const r = sp.get('ref');
-    return r ? String(r).trim() : '';
-  }, [sp]);
-
   const resetState = () => setErrorMsg(null);
 
-  // register完了画面を挟んだ後にログインへ
   useEffect(() => {
-    if (!registerDone) return;
-    const t = setTimeout(() => {
-      setMode('login');
-      setRegisterDone(false);
-      setPassword('');
-      setAccountId('99999'); // ログイン画面のID欄にデフォで入れておく（要望）
-    }, 1800);
-    return () => clearTimeout(t);
-  }, [registerDone]);
+    // ✅ 紹介コードは localStorage に保存（登録時に参照できる）
+    if (refCode) {
+      try {
+        localStorage.setItem('aps_ref_code', refCode);
+      } catch {}
+    }
+  }, [refCode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -61,7 +48,9 @@ export default function AuthPage() {
     setLoading(true);
     try {
       if (isLogin) {
-        // ログイン
+        // -----------------------------
+        // ログイン処理
+        // -----------------------------
         const { data, error } = await supabase.auth.signInWithPassword({
           email,
           password,
@@ -75,10 +64,10 @@ export default function AuthPage() {
 
         const user = data.user;
 
-        // email + account_id で profiles を確認（あなたの仕様）
+        // profiles からアカウントIDが一致するか確認（email + account_id）
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('id,email,account_id')
+          .select('*')
           .eq('email', user.email)
           .eq('account_id', accountId)
           .maybeSingle();
@@ -98,11 +87,12 @@ export default function AuthPage() {
 
         router.push('/u');
       } else {
-        // 新規登録
+        // -----------------------------
+        // 新規登録処理
+        // -----------------------------
         const { data, error } = await supabase.auth.signUp({
           email,
           password,
-          // ※ Supabase がメール確認ONの場合、ここで確認メールが飛びます
         });
 
         if (error || !data.user) {
@@ -113,32 +103,33 @@ export default function AuthPage() {
 
         const user = data.user;
 
-        // profiles に登録（最小：99999を付与）
-        // すでに行がある可能性もあるので upsert にして壊れにくくする
-        const now = new Date().toISOString();
+        // ✅ 紹介コード（ref）があれば profiles.referred_by_code に入れる（UIは変えない）
+        let storedRef = '';
+        try {
+          storedRef = localStorage.getItem('aps_ref_code') || '';
+        } catch {}
 
-        const { error: upsertError } = await supabase
-          .from('profiles')
-          .upsert(
-            {
-              id: user.id,
-              email: user.email,
-              account_id: '99999',
-              registered_at: now,
-              plan_status: 'trial',
-              trial_type: refCode ? 'referral' : 'normal',
-              referred_by_code: refCode || null,
-            },
-            { onConflict: 'id' },
-          );
+        // ✅ 登録直後は account_id=99999 をセット（あなたの要望）
+        const { error: upsertErr } = await supabase.from('profiles').upsert(
+          {
+            id: user.id,
+            email: user.email,
+            account_id: '99999',
+            referred_by_code: storedRef || null,
+            trial_type: storedRef ? 'referral' : 'normal',
+          },
+          { onConflict: 'id' },
+        );
 
-        if (upsertError) {
-          console.warn('profiles upsert error:', upsertError.message);
-          // upsertに失敗しても「登録完了表示」は出す（UX優先）
+        if (upsertErr) {
+          console.warn('profiles upsert error:', upsertErr);
         }
 
-        // ★ 要望：登録後にメッセージ表示→ログインへ
-        setRegisterDone(true);
+        // ✅ 登録完了メッセージ → ログインへ（ページ遷移だけ・UIを壊さない）
+        alert(
+          '新規アカウントが発行されました。\n無料期間のIDは99999をお使いください。\nログイン画面に戻ります。',
+        );
+        router.push('/auth');
       }
     } catch (err) {
       console.error('unexpected error:', err);
@@ -147,50 +138,6 @@ export default function AuthPage() {
       setLoading(false);
     }
   };
-
-  // 登録完了の中間画面（UI最小）
-  if (registerDone) {
-    return (
-      <main
-        style={{
-          minHeight: '100vh',
-          padding: '24px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-          background:
-            'radial-gradient(circle at 10% 20%, #ffb8d9 0, transparent 55%),' +
-            'radial-gradient(circle at 80% 25%, #b7e4ff 0, transparent 55%),' +
-            'radial-gradient(circle at 30% 80%, #c8ffc4 0, transparent 55%),' +
-            '#ffffff',
-        }}
-      >
-        <section
-          style={{
-            width: '100%',
-            maxWidth: 460,
-            backgroundColor: 'rgba(255,255,255,0.96)',
-            borderRadius: 20,
-            border: '1.6px solid rgba(140,140,140,0.28)',
-            padding: '40px 36px',
-            boxShadow:
-              '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
-            textAlign: 'center',
-          }}
-        >
-          <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 12 }}>
-            新規アカウントが発行されました
-          </h2>
-          <p style={{ fontSize: 14, lineHeight: 1.8, color: '#374151' }}>
-            無料期間のIDは <strong>99999</strong> をお使いください。
-            <br />
-            ログインページへ移動します…
-          </p>
-        </section>
-      </main>
-    );
-  }
 
   return (
     <main
@@ -310,7 +257,6 @@ export default function AuthPage() {
             >
               ログイン
             </button>
-
             <button
               type="button"
               onClick={() => {
@@ -337,7 +283,7 @@ export default function AuthPage() {
             onSubmit={handleSubmit}
             style={{ display: 'flex', flexDirection: 'column', gap: 18 }}
           >
-            <label style={{ width: '100%', display: 'block', fontSize: 14, fontWeight: 600, color: '#444' }}>
+            <label style={{ fontSize: 14, fontWeight: 600, color: '#444' }}>
               メールアドレス
               <input
                 type="email"
@@ -357,7 +303,7 @@ export default function AuthPage() {
               />
             </label>
 
-            <label style={{ width: '100%', display: 'block', fontSize: 14, fontWeight: 600, color: '#444' }}>
+            <label style={{ fontSize: 14, fontWeight: 600, color: '#444' }}>
               パスワード
               <input
                 type="password"
@@ -378,7 +324,7 @@ export default function AuthPage() {
             </label>
 
             {isLogin && (
-              <label style={{ width: '100%', display: 'block', fontSize: 14, fontWeight: 600, color: '#444' }}>
+              <label style={{ fontSize: 14, fontWeight: 600, color: '#444' }}>
                 アカウントID（5桁）
                 <input
                   type="text"
@@ -460,5 +406,14 @@ export default function AuthPage() {
         `}</style>
       </section>
     </main>
+  );
+}
+
+export default function AuthPage() {
+  // ✅ これがないと Vercel build で /auth が落ちる
+  return (
+    <Suspense fallback={<div style={{ padding: 24 }}>Loading…</div>}>
+      <AuthInner />
+    </Suspense>
   );
 }
