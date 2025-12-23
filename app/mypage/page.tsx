@@ -16,6 +16,8 @@ type Profile = {
   referral_code: string | null;
   referred_by_code: string | null;
 };
+
+// ✅ あなたが貼っているPayment Link（※testなら test_ のURLを使うのが安全）
 const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/8x214pfAK1ZZfisbIA5J606';
 const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/3cI8wRcoy6gf2vG6og5J603';
 
@@ -124,7 +126,10 @@ export default function MyPage() {
     resetMsg();
     setLoading(true);
 
-    const { error } = await supabase.from('profiles').update({ is_canceled: true }).eq('id', profile.id);
+    const { error } = await supabase
+      .from('profiles')
+      .update({ is_canceled: true })
+      .eq('id', profile.id);
 
     if (error) {
       console.error(error);
@@ -138,30 +143,32 @@ export default function MyPage() {
 
   type PlanAction = 'trial_to_starter' | 'trial_to_pro' | 'starter_to_pro' | 'pro_to_starter';
 
+  // ✅ ここが「完全版の中身」：押したらStripe購入画面へ遷移（UIは一切変えない）
   const callPlanAction = async (action: PlanAction) => {
     if (!profile) return;
+
     resetMsg();
     setPlanLoading(action);
 
     try {
-      const res = await fetch('/api/plan/change', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      });
+      // アクション → 遷移先URL
+      let redirectUrl: string | null = null;
 
-      const json = await res.json().catch(() => ({} as any));
-      if (!res.ok || json.error) {
-        throw new Error(json.message || json.error || 'プラン変更に失敗しました。');
+      if (action === 'trial_to_pro' || action === 'starter_to_pro') {
+        redirectUrl = STRIPE_BUY_PRO_URL;
+      } else if (action === 'trial_to_starter' || action === 'pro_to_starter') {
+        redirectUrl = STRIPE_BUY_STARTER_URL;
       }
 
-      const updated: Partial<Profile> = json.profile ?? {};
-      setProfile((prev) => (prev ? ({ ...prev, ...updated } as Profile) : prev));
-      setMessage(json.message || 'プランを変更しました。');
+      if (!redirectUrl) {
+        throw new Error('購入リンクが設定されていません。');
+      }
+
+      // ✅ ここでStripeの購入画面へ
+      window.location.href = redirectUrl;
     } catch (e: any) {
       console.error(e);
-      setError(e.message ?? 'プラン変更中にエラーが発生しました。');
-    } finally {
+      setError(e?.message ?? '購入画面への遷移に失敗しました。');
       setPlanLoading(null);
     }
   };
@@ -310,19 +317,35 @@ export default function MyPage() {
           <p style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>プラン変更</p>
 
           <div style={{ display: 'grid', gap: 8 }}>
-            <button onClick={() => callPlanAction('trial_to_starter')} disabled={!!planLoading} style={planButtonStyle(planLoading === 'trial_to_starter')}>
+            <button
+              onClick={() => callPlanAction('trial_to_starter')}
+              disabled={!!planLoading}
+              style={planButtonStyle(planLoading === 'trial_to_starter')}
+            >
               トライアル → Starter へ契約
             </button>
 
-            <button onClick={() => callPlanAction('trial_to_pro')} disabled={!!planLoading} style={planButtonStyle(planLoading === 'trial_to_pro')}>
+            <button
+              onClick={() => callPlanAction('trial_to_pro')}
+              disabled={!!planLoading}
+              style={planButtonStyle(planLoading === 'trial_to_pro')}
+            >
               トライアル → Pro へ契約
             </button>
 
-            <button onClick={() => callPlanAction('starter_to_pro')} disabled={!!planLoading} style={planButtonStyle(planLoading === 'starter_to_pro')}>
+            <button
+              onClick={() => callPlanAction('starter_to_pro')}
+              disabled={!!planLoading}
+              style={planButtonStyle(planLoading === 'starter_to_pro')}
+            >
               Starter → Pro に変更
             </button>
 
-            <button onClick={() => callPlanAction('pro_to_starter')} disabled={!!planLoading} style={planButtonStyle(planLoading === 'pro_to_starter')}>
+            <button
+              onClick={() => callPlanAction('pro_to_starter')}
+              disabled={!!planLoading}
+              style={planButtonStyle(planLoading === 'pro_to_starter')}
+            >
               Pro → Starter に変更
             </button>
           </div>
