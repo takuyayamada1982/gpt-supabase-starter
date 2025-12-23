@@ -1,132 +1,131 @@
-'use client';
+"use client";
 
-import { useEffect, useMemo, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { supabase } from '@/lib/supabaseClient';
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { supabase } from "@/lib/supabaseClient";
 
 export default function ResetClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [password, setPassword] = useState('');
-  const [password2, setPassword2] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [saving, setSaving] = useState(false);
   const [ready, setReady] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
 
-  // searchParams からも取れるように（環境差対策）
-  const spAccessToken = useMemo(() => searchParams.get('access_token'), [searchParams]);
-  const spRefreshToken = useMemo(() => searchParams.get('refresh_token'), [searchParams]);
+  // code が付くタイプ（PKCE）の場合に備える
+  const code = useMemo(() => searchParams.get("code"), [searchParams]);
 
   useEffect(() => {
-    const prepare = async () => {
-      setErrorMsg(null);
+    const init = async () => {
+      setMessage(null);
 
-      // ✅ Supabaseのrecoveryは hash(#access_token=...) で来ることが多い
-      const hash = typeof window !== 'undefined' ? window.location.hash : '';
-      const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
-
-      const access_token = spAccessToken ?? hashParams.get('access_token');
-      const refresh_token = spRefreshToken ?? hashParams.get('refresh_token');
-
-      if (!access_token || !refresh_token) {
-        setErrorMsg('リセット用トークンが見つかりません。メールのリンクをもう一度開いてください。');
-        setReady(true);
-        return;
+      // ① code がある場合は exchange して session 確立
+      if (code) {
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          setMessage(`セッション確立に失敗しました: ${error.message}`);
+          setReady(true);
+          return;
+        }
       }
 
-      // ✅ このページに入った時点でセッションをセット（これが無いと updateUser が失敗することがある）
-      const { error } = await supabase.auth.setSession({
-        access_token,
-        refresh_token,
-      });
-
-      if (error) {
-        setErrorMsg(`セッション設定に失敗しました: ${error.message}`);
+      // ② すでにセッションがあるか確認（recovery の hash から入った場合もここで拾える）
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        setMessage(
+          "リセット用セッションが見つかりません。リセットメールをもう一度送り、届いたリンクから開き直してください。"
+        );
+        setReady(true);
+        return;
       }
 
       setReady(true);
     };
 
-    prepare();
-  }, [spAccessToken, spRefreshToken]);
+    init();
+  }, [code]);
 
-  const onSubmit = async () => {
-    if (!password || !password2) {
-      alert('パスワードを入力してください');
-      return;
-    }
-    if (password !== password2) {
-      alert('パスワードが一致しません');
-      return;
-    }
-    if (password.length < 8) {
-      alert('パスワードは8文字以上にしてください');
+  const onUpdate = async () => {
+    setMessage(null);
+
+    if (newPassword.length < 8) {
+      setMessage("パスワードは8文字以上にしてください。");
       return;
     }
 
-    setLoading(true);
-    setErrorMsg(null);
-
-    const { error } = await supabase.auth.updateUser({ password });
-
-    setLoading(false);
+    setSaving(true);
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
 
     if (error) {
-      setErrorMsg(`更新に失敗しました: ${error.message}`);
+      setMessage(`更新に失敗しました: ${error.message}`);
+      setSaving(false);
       return;
     }
 
-    // ✅ 更新できたら一度ログアウトして、ログイン画面へ
-    await supabase.auth.signOut();
-    router.replace('/auth?reset=done');
+    setSaving(false);
+    alert("パスワードを更新しました。ログインしてください。");
+    router.push("/auth");
   };
 
   return (
-    <div style={{ maxWidth: 420, margin: '40px auto', padding: 24 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16 }}>パスワード再設定</h1>
+    <div style={{ maxWidth: 420, margin: "40px auto", padding: 16 }}>
+      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
+        パスワード再設定
+      </h1>
 
-      {!ready ? (
-        <div>確認中...</div>
-      ) : (
+      {!ready && <p>確認中...</p>}
+
+      {ready && (
         <>
-          {errorMsg && (
-            <div style={{ background: '#fee', padding: 12, borderRadius: 8, marginBottom: 12 }}>
-              {errorMsg}
-            </div>
+          {message && (
+            <p style={{ color: "crimson", marginBottom: 12 }}>{message}</p>
           )}
 
-          <label style={{ display: 'block', marginBottom: 6 }}>新しいパスワード</label>
+          <label style={{ display: "block", marginBottom: 8 }}>
+            新しいパスワード
+          </label>
           <input
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: '100%', padding: 10, marginBottom: 12 }}
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
             placeholder="8文字以上"
-          />
-
-          <label style={{ display: 'block', marginBottom: 6 }}>新しいパスワード（確認）</label>
-          <input
-            type="password"
-            value={password2}
-            onChange={(e) => setPassword2(e.target.value)}
-            style={{ width: '100%', padding: 10, marginBottom: 16 }}
-            placeholder="同じものを入力"
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 8,
+              border: "1px solid #ddd",
+              marginBottom: 12,
+            }}
           />
 
           <button
-            onClick={onSubmit}
-            disabled={loading}
-            style={{ width: '100%', padding: 12, fontWeight: 700 }}
+            onClick={onUpdate}
+            disabled={saving}
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 8,
+              border: "none",
+              cursor: "pointer",
+            }}
           >
-            {loading ? '更新中...' : 'パスワードを更新'}
+            {saving ? "更新中..." : "パスワードを更新"}
           </button>
 
           <button
-            onClick={() => router.replace('/auth')}
-            style={{ width: '100%', padding: 12, marginTop: 10 }}
+            onClick={() => router.push("/auth")}
+            style={{
+              width: "100%",
+              padding: 10,
+              borderRadius: 8,
+              marginTop: 10,
+              border: "1px solid #ddd",
+              background: "transparent",
+              cursor: "pointer",
+            }}
           >
-            ログイン画面へ戻る
+            ログインへ戻る
           </button>
         </>
       )}
