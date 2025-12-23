@@ -18,8 +18,8 @@ type Profile = {
 };
 
 // ✅ あなたが貼っているPayment Link（※testなら test_ のURLを使うのが安全）
-const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/8x214pfAK1ZZfisbIA5J606';
-const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/3cI8wRcoy6gf2vG6og5J603';
+const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/test_00w14p60a5cbdakaEw5J601';
+const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/test_3cI9AVbku7kj9Y82805J600';
 
 const REF_BASE_URL = 'https://gpt-supabase-starter.vercel.app/auth';
 
