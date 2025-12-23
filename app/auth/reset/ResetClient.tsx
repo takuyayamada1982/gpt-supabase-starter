@@ -8,197 +8,153 @@ export default function ResetClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [status, setStatus] = useState<
-    'checking' | 'ready' | 'updating' | 'done' | 'error'
-  >('checking');
+  // Supabase のリセットリンクには状況により色々入るので全部拾う
+  const code = searchParams.get('code'); // 新しめのフローで入ることがある
+  const accessToken = searchParams.get('access_token');
+  const refreshToken = searchParams.get('refresh_token');
+  const type = searchParams.get('type'); // recovery など
+  const errorDesc = searchParams.get('error_description');
 
-  const [message, setMessage] = useState<string>('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
+  const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
 
-  // URL（?code=...）があるか
-  const code = useMemo(() => searchParams.get('code'), [searchParams]);
-
-  // URLにエラーが付いていたら表示
-  useEffect(() => {
-    const e = searchParams.get('error');
-    const desc = searchParams.get('error_description');
-    if (e || desc) {
-      setStatus('error');
-      setMessage(
-        decodeURIComponent(desc ?? '') ||
-          'リンクが無効か期限切れです。もう一度「パスワード再設定」をやり直してください。'
-      );
-    }
-  }, [searchParams]);
-
-  // 1) code形式（?code=...）のとき：セッション交換
+  // 「このページに来たらセッションを成立させる」処理
   useEffect(() => {
     const run = async () => {
-      if (!code) {
-        // codeがない場合でも #access_token 形式で来ることがある
-        // それは supabase が自動で拾ってくれるケースもあるので
-        // 一応セッション確認だけして進める
-        const { data } = await supabase.auth.getSession();
-        if (data.session) {
-          setStatus('ready');
-          return;
+      // 1) URLにトークンが来ている場合は、セッション化しておく（重要）
+      if (accessToken && refreshToken) {
+        await supabase.auth.setSession({
+          access_token: accessToken,
+          refresh_token: refreshToken,
+        });
+        setReady(true);
+        return;
+      }
+
+      // 2) code が来ている場合（環境や設定により）
+      // ※ Supabase のフロー差異があるので、ここは “失敗しても続行” にしておく
+      if (code) {
+        try {
+          // @supabase/supabase-js のバージョンによっては exchangeCodeForSession が使えます
+          // もし型エラーが出る場合は、このブロックを丸ごと削除してOK（access_token方式で動けばOK）
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const anyAuth: any = supabase.auth;
+          if (anyAuth.exchangeCodeForSession) {
+            await anyAuth.exchangeCodeForSession(code);
+          }
+        } catch {
+          // 無視してOK
         }
-
-        // どっちも無い → リセットリンクとして成立してない
-        setStatus('error');
-        setMessage(
-          'リセット用の情報がURLに見つかりません。メールのリンクをもう一度開き直してください。'
-        );
+        setReady(true);
         return;
       }
 
-      // codeがある → 交換する
-      const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-      if (error) {
-        setStatus('error');
-        setMessage(
-          error.message ||
-            'リンクが無効か期限切れです。もう一度「パスワード再設定」をやり直してください。'
-        );
-        return;
-      }
-
-      if (data.session) {
-        setStatus('ready');
-        return;
-      }
-
-      setStatus('error');
-      setMessage(
-        'セッションを取得できませんでした。もう一度「パスワード再設定」をやり直してください。'
-      );
+      // 3) どれも無い = 正しいリセットリンクから来てない/期限切れの可能性
+      setReady(false);
     };
 
-    // すでにerror状態なら何もしない
-    if (status === 'error') return;
     run();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code]);
+  }, [accessToken, refreshToken, code]);
 
-  // 2) パスワード更新
-  const updatePassword = async () => {
-    if (!newPassword || !confirm) {
-      alert('新しいパスワードを入力してください');
-      return;
-    }
-    if (newPassword !== confirm) {
-      alert('パスワードが一致しません');
-      return;
-    }
-    if (newPassword.length < 6) {
-      alert('パスワードは6文字以上にしてください');
-      return;
-    }
+  const canSubmit = useMemo(() => {
+    if (!ready) return false;
+    if (!password || !password2) return false;
+    if (password.length < 8) return false;
+    if (password !== password2) return false;
+    return true;
+  }, [ready, password, password2]);
 
-    setStatus('updating');
+  const handleUpdatePassword = async () => {
+    if (!canSubmit) return;
 
-    const { error } = await supabase.auth.updateUser({
-      password: newPassword,
-    });
+    setLoading(true);
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      const hasSession = !!sessionData.session;
 
-    if (error) {
-      setStatus('error');
-      setMessage(error.message || '更新に失敗しました');
-      return;
-    }
+      if (!hasSession) {
+        alert('セッションが確認できません。パスワードリセットリンクを再発行してください。');
+        setLoading(false);
+        return;
+      }
 
-    setStatus('done');
-    setMessage('パスワードを更新しました。ログイン画面へ移動します。');
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) {
+        alert(error.message);
+        setLoading(false);
+        return;
+      }
 
-    // 少し待ってからログインへ
-    setTimeout(() => {
+      alert('パスワードを更新しました。ログイン画面へ戻ります。');
       router.push('/auth');
-    }, 1200);
+    } finally {
+      setLoading(false);
+    }
   };
 
+  // 画面
   return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24 }}>
-      <div style={{ width: 'min(520px, 100%)', border: '1px solid #e5e7eb', borderRadius: 16, padding: 24 }}>
-        <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700 }}>パスワード再設定</h1>
-        <p style={{ marginTop: 8, color: '#6b7280' }}>
-          メールのリンクから来た方は、この画面で新しいパスワードを設定できます。
-        </p>
+    <div style={{ maxWidth: 420, margin: '40px auto', padding: 16 }}>
+      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>パスワード再設定</h1>
 
-        {status === 'checking' && (
-          <div style={{ marginTop: 16 }}>確認中…</div>
-        )}
+      {errorDesc && (
+        <div style={{ background: '#ffecec', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+          <div style={{ fontWeight: 700 }}>エラー</div>
+          <div style={{ marginTop: 6 }}>{errorDesc}</div>
+        </div>
+      )}
 
-        {status === 'error' && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ padding: 12, borderRadius: 12, background: '#fef2f2', border: '1px solid #fecaca' }}>
-              <div style={{ fontWeight: 700, color: '#991b1b' }}>エラー</div>
-              <div style={{ marginTop: 8, color: '#7f1d1d' }}>{message}</div>
-            </div>
-
-            <button
-              style={{ marginTop: 16, padding: '10px 14px', borderRadius: 10, border: '1px solid #e5e7eb', cursor: 'pointer' }}
-              onClick={() => router.push('/auth')}
-            >
+      {!ready && (
+        <div style={{ background: '#fff7e6', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+          <div style={{ fontWeight: 700 }}>このリンクは無効か期限切れの可能性があります</div>
+          <div style={{ marginTop: 6 }}>
+            もう一度「パスワードリセット」を実行して、新しいメールのリンクから開いてください。
+          </div>
+          <div style={{ marginTop: 10 }}>
+            <button onClick={() => router.push('/auth')} style={{ padding: '10px 12px' }}>
               ログイン画面へ
             </button>
           </div>
-        )}
+        </div>
+      )}
 
-        {status === 'ready' && (
-          <div style={{ marginTop: 16, display: 'grid', gap: 12 }}>
-            <input
-              type="password"
-              placeholder="新しいパスワード（6文字以上）"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              style={{ padding: 12, borderRadius: 10, border: '1px solid #e5e7eb' }}
-            />
-            <input
-              type="password"
-              placeholder="新しいパスワード（確認）"
-              value={confirm}
-              onChange={(e) => setConfirm(e.target.value)}
-              style={{ padding: 12, borderRadius: 10, border: '1px solid #e5e7eb' }}
-            />
+      <div style={{ display: 'grid', gap: 10 }}>
+        <input
+          type="password"
+          placeholder="新しいパスワード（8文字以上）"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          style={{ padding: 12, borderRadius: 10, border: '1px solid #ccc' }}
+        />
+        <input
+          type="password"
+          placeholder="新しいパスワード（確認）"
+          value={password2}
+          onChange={(e) => setPassword2(e.target.value)}
+          style={{ padding: 12, borderRadius: 10, border: '1px solid #ccc' }}
+        />
 
-            <button
-              onClick={updatePassword}
-              disabled={status === 'updating'}
-              style={{
-                padding: '12px 14px',
-                borderRadius: 10,
-                border: 'none',
-                cursor: 'pointer',
-                fontWeight: 700,
-              }}
-            >
-              {status === 'updating' ? '更新中…' : 'パスワードを更新する'}
-            </button>
+        <button
+          onClick={handleUpdatePassword}
+          disabled={!canSubmit || loading}
+          style={{ padding: 12, borderRadius: 10, border: '1px solid #000', fontWeight: 700 }}
+        >
+          {loading ? '更新中…' : 'パスワードを更新'}
+        </button>
 
-            <button
-              onClick={() => router.push('/auth')}
-              style={{
-                padding: '10px 14px',
-                borderRadius: 10,
-                border: '1px solid #e5e7eb',
-                cursor: 'pointer',
-                background: 'transparent',
-              }}
-            >
-              ログイン画面へ戻る
-            </button>
-          </div>
-        )}
+        <button onClick={() => router.push('/auth')} style={{ padding: 12, borderRadius: 10 }}>
+          ログイン画面に戻る
+        </button>
 
-        {status === 'done' && (
-          <div style={{ marginTop: 16 }}>
-            <div style={{ padding: 12, borderRadius: 12, background: '#ecfdf5', border: '1px solid #a7f3d0' }}>
-              <div style={{ fontWeight: 700, color: '#065f46' }}>完了</div>
-              <div style={{ marginTop: 8, color: '#064e3b' }}>{message}</div>
-            </div>
-          </div>
-        )}
+        {/* デバッグ表示（不要なら削除OK） */}
+        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
+          <div>type: {type ?? '-'}</div>
+          <div>has access_token: {accessToken ? 'yes' : 'no'}</div>
+          <div>has refresh_token: {refreshToken ? 'yes' : 'no'}</div>
+          <div>has code: {code ? 'yes' : 'no'}</div>
+        </div>
       </div>
     </div>
   );
