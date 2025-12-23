@@ -1,10 +1,5 @@
-import { Suspense } from 'react';
 import AuthClient from './AuthClient';
 
-export default function Page() {
-  return (
-    <Suspense fallback={<div className="min-h-screen grid place-items-center">Loading...</div>}>
-      <AuthClient />
-    </Suspense>
-  );
+export default function AuthPage() {
+  return <AuthClient />;
 }
