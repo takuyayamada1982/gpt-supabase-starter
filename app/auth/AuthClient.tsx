@@ -8,6 +8,9 @@ export default function AuthClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // =========================
+  // state（既存）
+  // =========================
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [accountId, setAccountId] = useState('');
@@ -15,7 +18,7 @@ export default function AuthClient() {
   const [isRegister, setIsRegister] = useState(false);
 
   // =========================
-  // 紹介コード取得（既存）
+  // 紹介コード取得（既存仕様）
   // =========================
   useEffect(() => {
     const ref = searchParams.get('ref');
@@ -25,7 +28,7 @@ export default function AuthClient() {
   }, [searchParams]);
 
   // =========================
-  // ログイン（既存）
+  // ログイン（既存仕様）
   // =========================
   const handleLogin = async () => {
     if (!email || !password || !accountId) {
@@ -46,6 +49,7 @@ export default function AuthClient() {
       return;
     }
 
+    // account_id チェック（既存仕様）
     const { data: profile } = await supabase
       .from('profiles')
       .select('account_id')
@@ -59,11 +63,12 @@ export default function AuthClient() {
       return;
     }
 
+    setLoading(false);
     router.push('/u');
   };
 
   // =========================
-  // 新規登録（既存）
+  // 新規登録（既存仕様）
   // =========================
   const handleRegister = async () => {
     if (!email || !password) {
@@ -96,11 +101,12 @@ export default function AuthClient() {
       referred_by_code: referralCode,
     });
 
+    setLoading(false);
     router.push('/u');
   };
 
   // =========================
-  // ✅ パスワードリセット（←これを追加）
+  // ✅ パスワードリセットメール送信（追加）
   // =========================
   const handleResetPassword = async () => {
     if (!email) {
@@ -121,14 +127,56 @@ export default function AuthClient() {
       return;
     }
 
-    alert(
-      'パスワード再設定用のメールを送信しました。\n' +
-        'メール内のリンクをクリックしてください。'
-    );
+    alert('パスワード再設定メールを送信しました。メール内のリンクを開いてください。');
   };
 
   // =========================
   // UI
   // =========================
   return (
-    <div className="auth-con
+    <div className="auth-container">
+      <h1>Auto post studio</h1>
+
+      <input
+        type="email"
+        placeholder="メールアドレス"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+      />
+
+      {!isRegister && (
+        <input
+          type="text"
+          placeholder="アカウントID"
+          value={accountId}
+          onChange={(e) => setAccountId(e.target.value)}
+        />
+      )}
+
+      <input
+        type="password"
+        placeholder="パスワード"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+      />
+
+      <button
+        onClick={isRegister ? handleRegister : handleLogin}
+        disabled={loading}
+      >
+        {isRegister ? '新規登録' : 'ログイン'}
+      </button>
+
+      {/* ✅ パスワード忘れ */}
+      {!isRegister && (
+        <button onClick={handleResetPassword} disabled={loading}>
+          パスワードを忘れた方はこちら
+        </button>
+      )}
+
+      <button onClick={() => setIsRegister(!isRegister)} disabled={loading}>
+        {isRegister ? 'ログインに戻る' : '新規登録はこちら'}
+      </button>
+    </div>
+  );
+}
