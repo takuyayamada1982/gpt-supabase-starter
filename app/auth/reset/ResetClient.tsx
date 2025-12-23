@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
@@ -14,47 +14,37 @@ export default function ResetClient() {
   const [ready, setReady] = useState(false);
   const [message, setMessage] = useState<string>('');
 
-  // URLの hash (#access_token=...) からtokenを取る（Supabaseはhashで渡してくることが多い）
-  const hashTokens = useMemo(() => {
-    if (typeof window === 'undefined') return null;
+  // ✅ windowは「useEffectの中だけ」で触る（これが最重要）
+  useEffect(() => {
+    const err = searchParams.get('error_description') || searchParams.get('error');
+    if (err) setMessage(decodeURIComponent(err));
+
     const hash = window.location.hash?.replace('#', '');
-    if (!hash) return null;
+    if (!hash) {
+      setReady(true);
+      return;
+    }
 
     const params = new URLSearchParams(hash);
     const access_token = params.get('access_token');
     const refresh_token = params.get('refresh_token');
-    const type = params.get('type');
 
-    if (!access_token || !refresh_token) return null;
-    return { access_token, refresh_token, type };
-  }, []);
-
-  // クエリの error を表示（otp_expired など）
-  useEffect(() => {
-    const err = searchParams.get('error_description') || searchParams.get('error');
-    if (err) setMessage(decodeURIComponent(err));
-  }, [searchParams]);
-
-  // token を session にセット
-  useEffect(() => {
     (async () => {
       try {
-        if (hashTokens?.access_token && hashTokens?.refresh_token) {
+        if (access_token && refresh_token) {
           const { error } = await supabase.auth.setSession({
-            access_token: hashTokens.access_token,
-            refresh_token: hashTokens.refresh_token,
+            access_token,
+            refresh_token,
           });
           if (error) {
             setMessage(`セッション設定に失敗: ${error.message}`);
-            setReady(true);
-            return;
           }
         }
       } finally {
         setReady(true);
       }
     })();
-  }, [hashTokens]);
+  }, [searchParams]);
 
   const onUpdatePassword = async () => {
     if (!password || !password2) {
@@ -84,7 +74,6 @@ export default function ResetClient() {
     setMessage('パスワードを更新しました。ログイン画面へ移動します。');
     setLoading(false);
 
-    // 必要ならサインアウトしてログインさせ直す
     await supabase.auth.signOut();
     router.push('/auth');
   };
