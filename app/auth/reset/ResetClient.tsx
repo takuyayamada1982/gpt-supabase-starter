@@ -1,134 +1,126 @@
-"use client";
+'use client';
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { supabase } from "@/lib/supabaseClient";
+import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
+
+function parseHash(hash: string) {
+  // 例: #access_token=...&refresh_token=...&type=recovery
+  const h = hash.startsWith('#') ? hash.slice(1) : hash;
+  const params = new URLSearchParams(h);
+  return {
+    access_token: params.get('access_token'),
+    refresh_token: params.get('refresh_token'),
+    type: params.get('type'),
+    error: params.get('error'),
+    error_code: params.get('error_code'),
+    error_description: params.get('error_description'),
+  };
+}
 
 export default function ResetClient() {
   const router = useRouter();
-  const searchParams = useSearchParams();
 
-  const [newPassword, setNewPassword] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [ready, setReady] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [step, setStep] = useState<'checking' | 'ready' | 'done'>('checking');
+  const [message, setMessage] = useState<string>('');
+  const [newPassword, setNewPassword] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  // code が付くタイプ（PKCE）の場合に備える
-  const code = useMemo(() => searchParams.get("code"), [searchParams]);
+  const hashInfo = useMemo(() => parseHash(window.location.hash || ''), []);
 
   useEffect(() => {
-    const init = async () => {
-      setMessage(null);
-
-      // ① code がある場合は exchange して session 確立
-      if (code) {
-        const { error } = await supabase.auth.exchangeCodeForSession(code);
-        if (error) {
-          setMessage(`セッション確立に失敗しました: ${error.message}`);
-          setReady(true);
-          return;
-        }
-      }
-
-      // ② すでにセッションがあるか確認（recovery の hash から入った場合もここで拾える）
-      const { data } = await supabase.auth.getSession();
-      if (!data.session) {
+    (async () => {
+      // エラーがURLに付いている場合
+      if (hashInfo.error) {
         setMessage(
-          "リセット用セッションが見つかりません。リセットメールをもう一度送り、届いたリンクから開き直してください。"
+          `リンクが無効か期限切れです。もう一度「パスワードを忘れた方はこちら」から送信してください。\n\n(${hashInfo.error_code ?? ''}) ${hashInfo.error_description ?? ''}`
         );
-        setReady(true);
+        setStep('ready'); // 入力は出さないが画面は表示
         return;
       }
 
-      setReady(true);
-    };
+      // recovery で来た access_token を session 化
+      const access_token = hashInfo.access_token;
+      const refresh_token = hashInfo.refresh_token;
 
-    init();
-  }, [code]);
+      if (access_token && refresh_token) {
+        const { error } = await supabase.auth.setSession({
+          access_token,
+          refresh_token,
+        });
 
-  const onUpdate = async () => {
-    setMessage(null);
+        if (error) {
+          setMessage(
+            `セッション設定に失敗しました。リンクが期限切れの可能性があります。\n\n${error.message}`
+          );
+          setStep('ready');
+          return;
+        }
 
-    if (newPassword.length < 8) {
-      setMessage("パスワードは8文字以上にしてください。");
+        setMessage('新しいパスワードを入力してください。');
+        setStep('ready');
+        return;
+      }
+
+      // ハッシュが無い（直アクセス等）
+      setMessage(
+        'このページは、パスワード再設定メールのリンクからアクセスしてください。'
+      );
+      setStep('ready');
+    })();
+  }, [hashInfo]);
+
+  const handleUpdate = async () => {
+    if (!newPassword || newPassword.length < 8) {
+      alert('パスワードは8文字以上にしてください');
       return;
     }
 
-    setSaving(true);
+    setLoading(true);
     const { error } = await supabase.auth.updateUser({ password: newPassword });
+    setLoading(false);
 
     if (error) {
-      setMessage(`更新に失敗しました: ${error.message}`);
-      setSaving(false);
+      alert(error.message);
       return;
     }
 
-    setSaving(false);
-    alert("パスワードを更新しました。ログインしてください。");
-    router.push("/auth");
+    setStep('done');
+    setMessage('パスワードを更新しました。ログイン画面へ戻ります。');
+
+    // セッションを残す/消すは好みだが、わかりやすくログインへ戻す
+    await supabase.auth.signOut();
+    router.push('/auth');
   };
 
   return (
-    <div style={{ maxWidth: 420, margin: "40px auto", padding: 16 }}>
-      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>
-        パスワード再設定
+    <div style={{ maxWidth: 520, margin: '48px auto', padding: 24 }}>
+      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
+        Reset password
       </h1>
 
-      {!ready && <p>確認中...</p>}
+      <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{message}</div>
 
-      {ready && (
+      {step === 'ready' && !hashInfo.error && (
         <>
-          {message && (
-            <p style={{ color: "crimson", marginBottom: 12 }}>{message}</p>
-          )}
-
-          <label style={{ display: "block", marginBottom: 8 }}>
-            新しいパスワード
-          </label>
           <input
             type="password"
+            placeholder="新しいパスワード（8文字以上）"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
-            placeholder="8文字以上"
-            style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 8,
-              border: "1px solid #ddd",
-              marginBottom: 12,
-            }}
+            style={{ width: '100%', padding: 10, marginBottom: 12 }}
           />
-
           <button
-            onClick={onUpdate}
-            disabled={saving}
-            style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 8,
-              border: "none",
-              cursor: "pointer",
-            }}
+            onClick={handleUpdate}
+            disabled={loading}
+            style={{ padding: '10px 16px' }}
           >
-            {saving ? "更新中..." : "パスワードを更新"}
-          </button>
-
-          <button
-            onClick={() => router.push("/auth")}
-            style={{
-              width: "100%",
-              padding: 10,
-              borderRadius: 8,
-              marginTop: 10,
-              border: "1px solid #ddd",
-              background: "transparent",
-              cursor: "pointer",
-            }}
-          >
-            ログインへ戻る
+            {loading ? '更新中…' : 'パスワードを更新'}
           </button>
         </>
       )}
+
+      {step === 'checking' && <div>確認中…</div>}
     </div>
   );
 }
