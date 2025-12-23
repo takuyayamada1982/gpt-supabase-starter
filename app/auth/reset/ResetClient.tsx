@@ -1,126 +1,147 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-
-function parseHash(hash: string) {
-  // 例: #access_token=...&refresh_token=...&type=recovery
-  const h = hash.startsWith('#') ? hash.slice(1) : hash;
-  const params = new URLSearchParams(h);
-  return {
-    access_token: params.get('access_token'),
-    refresh_token: params.get('refresh_token'),
-    type: params.get('type'),
-    error: params.get('error'),
-    error_code: params.get('error_code'),
-    error_description: params.get('error_description'),
-  };
-}
 
 export default function ResetClient() {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
-  const [step, setStep] = useState<'checking' | 'ready' | 'done'>('checking');
-  const [message, setMessage] = useState<string>('');
-  const [newPassword, setNewPassword] = useState('');
+  const [password, setPassword] = useState('');
+  const [password2, setPassword2] = useState('');
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [message, setMessage] = useState<string>('');
 
-  const hashInfo = useMemo(() => parseHash(window.location.hash || ''), []);
+  // URLの hash (#access_token=...) からtokenを取る（Supabaseはhashで渡してくることが多い）
+  const hashTokens = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    const hash = window.location.hash?.replace('#', '');
+    if (!hash) return null;
 
+    const params = new URLSearchParams(hash);
+    const access_token = params.get('access_token');
+    const refresh_token = params.get('refresh_token');
+    const type = params.get('type');
+
+    if (!access_token || !refresh_token) return null;
+    return { access_token, refresh_token, type };
+  }, []);
+
+  // クエリの error を表示（otp_expired など）
+  useEffect(() => {
+    const err = searchParams.get('error_description') || searchParams.get('error');
+    if (err) setMessage(decodeURIComponent(err));
+  }, [searchParams]);
+
+  // token を session にセット
   useEffect(() => {
     (async () => {
-      // エラーがURLに付いている場合
-      if (hashInfo.error) {
-        setMessage(
-          `リンクが無効か期限切れです。もう一度「パスワードを忘れた方はこちら」から送信してください。\n\n(${hashInfo.error_code ?? ''}) ${hashInfo.error_description ?? ''}`
-        );
-        setStep('ready'); // 入力は出さないが画面は表示
-        return;
-      }
-
-      // recovery で来た access_token を session 化
-      const access_token = hashInfo.access_token;
-      const refresh_token = hashInfo.refresh_token;
-
-      if (access_token && refresh_token) {
-        const { error } = await supabase.auth.setSession({
-          access_token,
-          refresh_token,
-        });
-
-        if (error) {
-          setMessage(
-            `セッション設定に失敗しました。リンクが期限切れの可能性があります。\n\n${error.message}`
-          );
-          setStep('ready');
-          return;
+      try {
+        if (hashTokens?.access_token && hashTokens?.refresh_token) {
+          const { error } = await supabase.auth.setSession({
+            access_token: hashTokens.access_token,
+            refresh_token: hashTokens.refresh_token,
+          });
+          if (error) {
+            setMessage(`セッション設定に失敗: ${error.message}`);
+            setReady(true);
+            return;
+          }
         }
-
-        setMessage('新しいパスワードを入力してください。');
-        setStep('ready');
-        return;
+      } finally {
+        setReady(true);
       }
-
-      // ハッシュが無い（直アクセス等）
-      setMessage(
-        'このページは、パスワード再設定メールのリンクからアクセスしてください。'
-      );
-      setStep('ready');
     })();
-  }, [hashInfo]);
+  }, [hashTokens]);
 
-  const handleUpdate = async () => {
-    if (!newPassword || newPassword.length < 8) {
-      alert('パスワードは8文字以上にしてください');
+  const onUpdatePassword = async () => {
+    if (!password || !password2) {
+      alert('新しいパスワードを2回入力してください');
+      return;
+    }
+    if (password !== password2) {
+      alert('パスワードが一致しません');
+      return;
+    }
+    if (password.length < 6) {
+      alert('パスワードは6文字以上にしてください');
       return;
     }
 
     setLoading(true);
-    const { error } = await supabase.auth.updateUser({ password: newPassword });
-    setLoading(false);
+    setMessage('');
+
+    const { error } = await supabase.auth.updateUser({ password });
 
     if (error) {
-      alert(error.message);
+      setMessage(`更新失敗: ${error.message}`);
+      setLoading(false);
       return;
     }
 
-    setStep('done');
-    setMessage('パスワードを更新しました。ログイン画面へ戻ります。');
+    setMessage('パスワードを更新しました。ログイン画面へ移動します。');
+    setLoading(false);
 
-    // セッションを残す/消すは好みだが、わかりやすくログインへ戻す
+    // 必要ならサインアウトしてログインさせ直す
     await supabase.auth.signOut();
     router.push('/auth');
   };
 
   return (
-    <div style={{ maxWidth: 520, margin: '48px auto', padding: 24 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, marginBottom: 12 }}>
-        Reset password
-      </h1>
+    <div className="min-h-screen flex items-center justify-center bg-[#f8fafc] p-6">
+      <div className="w-full max-w-lg bg-white rounded-2xl shadow p-8">
+        <h1 className="text-2xl font-bold mb-2">パスワード再設定</h1>
+        <p className="text-sm text-slate-600 mb-6">
+          メールのリンクから開いた場合、ここで新しいパスワードを設定できます。
+        </p>
 
-      <div style={{ whiteSpace: 'pre-wrap', marginBottom: 16 }}>{message}</div>
+        {!ready ? (
+          <div className="text-sm text-slate-600">準備中...</div>
+        ) : (
+          <>
+            {message && (
+              <div className="mb-4 text-sm text-red-600 whitespace-pre-wrap">
+                {message}
+              </div>
+            )}
 
-      {step === 'ready' && !hashInfo.error && (
-        <>
-          <input
-            type="password"
-            placeholder="新しいパスワード（8文字以上）"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            style={{ width: '100%', padding: 10, marginBottom: 12 }}
-          />
-          <button
-            onClick={handleUpdate}
-            disabled={loading}
-            style={{ padding: '10px 16px' }}
-          >
-            {loading ? '更新中…' : 'パスワードを更新'}
-          </button>
-        </>
-      )}
+            <label className="block text-sm font-medium mb-1">新しいパスワード</label>
+            <input
+              type="password"
+              className="w-full border rounded-lg px-3 py-2 mb-4"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              placeholder="6文字以上"
+            />
 
-      {step === 'checking' && <div>確認中…</div>}
+            <label className="block text-sm font-medium mb-1">新しいパスワード（確認）</label>
+            <input
+              type="password"
+              className="w-full border rounded-lg px-3 py-2 mb-6"
+              value={password2}
+              onChange={(e) => setPassword2(e.target.value)}
+              placeholder="もう一度入力"
+            />
+
+            <button
+              onClick={onUpdatePassword}
+              disabled={loading}
+              className="w-full rounded-lg bg-slate-900 text-white py-2 font-medium disabled:opacity-60"
+            >
+              {loading ? '更新中...' : 'パスワードを更新'}
+            </button>
+
+            <button
+              onClick={() => router.push('/auth')}
+              className="w-full mt-3 rounded-lg border py-2 font-medium"
+            >
+              ログインに戻る
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
