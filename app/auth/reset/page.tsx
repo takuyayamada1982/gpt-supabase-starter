@@ -23,7 +23,7 @@ export default function ResetPasswordPage() {
         if (error) {
           console.error('exchangeCodeForSession error:', error);
           setMsg(
-            'リンクの有効期限が切れている可能性があります。/auth から再度「パスワードを忘れた方はこちら」をお試しください。'
+            'リンクの有効期限が切れている可能性があります。ログイン画面から再度「パスワードを忘れた方はこちら」をお試しください。'
           );
         }
       } catch (e) {
@@ -56,7 +56,7 @@ export default function ResetPasswordPage() {
         return;
       }
 
-      setMsg('パスワードを更新しました。/auth に戻ってログインしてください。');
+      setMsg('パスワードを更新しました。ログイン画面に戻ってログインしてください。');
     } catch (err) {
       console.error('updateUser unexpected error:', err);
       setMsg('予期しないエラーが発生しました。時間をおいて再度お試しください。');
