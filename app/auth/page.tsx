@@ -1,11 +1,9 @@
 import { Suspense } from 'react';
 import AuthClient from './AuthClient';
 
-export const dynamic = 'force-dynamic';
-
 export default function Page() {
   return (
-    <Suspense fallback={<div style={{ padding: 24 }}>読み込み中…</div>}>
+    <Suspense fallback={<div className="min-h-screen grid place-items-center">Loading...</div>}>
       <AuthClient />
     </Suspense>
   );
