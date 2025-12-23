@@ -8,154 +8,128 @@ export default function ResetClient() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  // Supabase のリセットリンクには状況により色々入るので全部拾う
-  const code = searchParams.get('code'); // 新しめのフローで入ることがある
-  const accessToken = searchParams.get('access_token');
-  const refreshToken = searchParams.get('refresh_token');
-  const type = searchParams.get('type'); // recovery など
-  const errorDesc = searchParams.get('error_description');
-
   const [password, setPassword] = useState('');
   const [password2, setPassword2] = useState('');
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // 「このページに来たらセッションを成立させる」処理
+  // searchParams からも取れるように（環境差対策）
+  const spAccessToken = useMemo(() => searchParams.get('access_token'), [searchParams]);
+  const spRefreshToken = useMemo(() => searchParams.get('refresh_token'), [searchParams]);
+
   useEffect(() => {
-    const run = async () => {
-      // 1) URLにトークンが来ている場合は、セッション化しておく（重要）
-      if (accessToken && refreshToken) {
-        await supabase.auth.setSession({
-          access_token: accessToken,
-          refresh_token: refreshToken,
-        });
+    const prepare = async () => {
+      setErrorMsg(null);
+
+      // ✅ Supabaseのrecoveryは hash(#access_token=...) で来ることが多い
+      const hash = typeof window !== 'undefined' ? window.location.hash : '';
+      const hashParams = new URLSearchParams(hash.replace(/^#/, ''));
+
+      const access_token = spAccessToken ?? hashParams.get('access_token');
+      const refresh_token = spRefreshToken ?? hashParams.get('refresh_token');
+
+      if (!access_token || !refresh_token) {
+        setErrorMsg('リセット用トークンが見つかりません。メールのリンクをもう一度開いてください。');
         setReady(true);
         return;
       }
 
-      // 2) code が来ている場合（環境や設定により）
-      // ※ Supabase のフロー差異があるので、ここは “失敗しても続行” にしておく
-      if (code) {
-        try {
-          // @supabase/supabase-js のバージョンによっては exchangeCodeForSession が使えます
-          // もし型エラーが出る場合は、このブロックを丸ごと削除してOK（access_token方式で動けばOK）
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const anyAuth: any = supabase.auth;
-          if (anyAuth.exchangeCodeForSession) {
-            await anyAuth.exchangeCodeForSession(code);
-          }
-        } catch {
-          // 無視してOK
-        }
-        setReady(true);
-        return;
+      // ✅ このページに入った時点でセッションをセット（これが無いと updateUser が失敗することがある）
+      const { error } = await supabase.auth.setSession({
+        access_token,
+        refresh_token,
+      });
+
+      if (error) {
+        setErrorMsg(`セッション設定に失敗しました: ${error.message}`);
       }
 
-      // 3) どれも無い = 正しいリセットリンクから来てない/期限切れの可能性
-      setReady(false);
+      setReady(true);
     };
 
-    run();
-  }, [accessToken, refreshToken, code]);
+    prepare();
+  }, [spAccessToken, spRefreshToken]);
 
-  const canSubmit = useMemo(() => {
-    if (!ready) return false;
-    if (!password || !password2) return false;
-    if (password.length < 8) return false;
-    if (password !== password2) return false;
-    return true;
-  }, [ready, password, password2]);
-
-  const handleUpdatePassword = async () => {
-    if (!canSubmit) return;
+  const onSubmit = async () => {
+    if (!password || !password2) {
+      alert('パスワードを入力してください');
+      return;
+    }
+    if (password !== password2) {
+      alert('パスワードが一致しません');
+      return;
+    }
+    if (password.length < 8) {
+      alert('パスワードは8文字以上にしてください');
+      return;
+    }
 
     setLoading(true);
-    try {
-      const { data: sessionData } = await supabase.auth.getSession();
-      const hasSession = !!sessionData.session;
+    setErrorMsg(null);
 
-      if (!hasSession) {
-        alert('セッションが確認できません。パスワードリセットリンクを再発行してください。');
-        setLoading(false);
-        return;
-      }
+    const { error } = await supabase.auth.updateUser({ password });
 
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) {
-        alert(error.message);
-        setLoading(false);
-        return;
-      }
+    setLoading(false);
 
-      alert('パスワードを更新しました。ログイン画面へ戻ります。');
-      router.push('/auth');
-    } finally {
-      setLoading(false);
+    if (error) {
+      setErrorMsg(`更新に失敗しました: ${error.message}`);
+      return;
     }
+
+    // ✅ 更新できたら一度ログアウトして、ログイン画面へ
+    await supabase.auth.signOut();
+    router.replace('/auth?reset=done');
   };
 
-  // 画面
   return (
-    <div style={{ maxWidth: 420, margin: '40px auto', padding: 16 }}>
-      <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 12 }}>パスワード再設定</h1>
+    <div style={{ maxWidth: 420, margin: '40px auto', padding: 24 }}>
+      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 16 }}>パスワード再設定</h1>
 
-      {errorDesc && (
-        <div style={{ background: '#ffecec', padding: 12, borderRadius: 8, marginBottom: 12 }}>
-          <div style={{ fontWeight: 700 }}>エラー</div>
-          <div style={{ marginTop: 6 }}>{errorDesc}</div>
-        </div>
+      {!ready ? (
+        <div>確認中...</div>
+      ) : (
+        <>
+          {errorMsg && (
+            <div style={{ background: '#fee', padding: 12, borderRadius: 8, marginBottom: 12 }}>
+              {errorMsg}
+            </div>
+          )}
+
+          <label style={{ display: 'block', marginBottom: 6 }}>新しいパスワード</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            style={{ width: '100%', padding: 10, marginBottom: 12 }}
+            placeholder="8文字以上"
+          />
+
+          <label style={{ display: 'block', marginBottom: 6 }}>新しいパスワード（確認）</label>
+          <input
+            type="password"
+            value={password2}
+            onChange={(e) => setPassword2(e.target.value)}
+            style={{ width: '100%', padding: 10, marginBottom: 16 }}
+            placeholder="同じものを入力"
+          />
+
+          <button
+            onClick={onSubmit}
+            disabled={loading}
+            style={{ width: '100%', padding: 12, fontWeight: 700 }}
+          >
+            {loading ? '更新中...' : 'パスワードを更新'}
+          </button>
+
+          <button
+            onClick={() => router.replace('/auth')}
+            style={{ width: '100%', padding: 12, marginTop: 10 }}
+          >
+            ログイン画面へ戻る
+          </button>
+        </>
       )}
-
-      {!ready && (
-        <div style={{ background: '#fff7e6', padding: 12, borderRadius: 8, marginBottom: 12 }}>
-          <div style={{ fontWeight: 700 }}>このリンクは無効か期限切れの可能性があります</div>
-          <div style={{ marginTop: 6 }}>
-            もう一度「パスワードリセット」を実行して、新しいメールのリンクから開いてください。
-          </div>
-          <div style={{ marginTop: 10 }}>
-            <button onClick={() => router.push('/auth')} style={{ padding: '10px 12px' }}>
-              ログイン画面へ
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gap: 10 }}>
-        <input
-          type="password"
-          placeholder="新しいパスワード（8文字以上）"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ padding: 12, borderRadius: 10, border: '1px solid #ccc' }}
-        />
-        <input
-          type="password"
-          placeholder="新しいパスワード（確認）"
-          value={password2}
-          onChange={(e) => setPassword2(e.target.value)}
-          style={{ padding: 12, borderRadius: 10, border: '1px solid #ccc' }}
-        />
-
-        <button
-          onClick={handleUpdatePassword}
-          disabled={!canSubmit || loading}
-          style={{ padding: 12, borderRadius: 10, border: '1px solid #000', fontWeight: 700 }}
-        >
-          {loading ? '更新中…' : 'パスワードを更新'}
-        </button>
-
-        <button onClick={() => router.push('/auth')} style={{ padding: 12, borderRadius: 10 }}>
-          ログイン画面に戻る
-        </button>
-
-        {/* デバッグ表示（不要なら削除OK） */}
-        <div style={{ fontSize: 12, opacity: 0.7, marginTop: 12 }}>
-          <div>type: {type ?? '-'}</div>
-          <div>has access_token: {accessToken ? 'yes' : 'no'}</div>
-          <div>has refresh_token: {refreshToken ? 'yes' : 'no'}</div>
-          <div>has code: {code ? 'yes' : 'no'}</div>
-        </div>
-      </div>
     </div>
   );
 }
