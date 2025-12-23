@@ -16,6 +16,8 @@ type Profile = {
   referral_code: string | null;
   referred_by_code: string | null;
 };
+const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/8x214pfAK1ZZfisbIA5J606';
+const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/3cI8wRcoy6gf2vG6og5J603';
 
 const REF_BASE_URL = 'https://gpt-supabase-starter.vercel.app/auth';
 
