@@ -17,11 +17,12 @@ type Profile = {
   referred_by_code: string | null;
 };
 
-// ✅ あなたが貼っているPayment Link（※testなら test_ のURLを使うのが安全）
-const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/test_00w14p60a5cbdakaEw5J601';
-const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/test_3cI9AVbku7kj9Y82805J600';
+// ✅ あなたの Payment Link（そのまま使う）
+const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/8x214pfAK1ZZfisbIA5J606';
+const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/3cI8wRcoy6gf2vG6og5J603';
 
-const REF_BASE_URL = 'https://gpt-supabase-starter.vercel.app/auth';
+// ✅ 紹介URLのベース（本番URLに合わせる）
+const REF_BASE_URL = 'https://auto-post-studio.vercel.app/auth';
 
 export default function MyPage() {
   const router = useRouter();
@@ -80,7 +81,7 @@ export default function MyPage() {
         setError('プロフィール情報の取得に失敗しました。');
         setProfile(null);
       } else {
-        setProfile(data ? ((data as unknown) as Profile) : null);
+        setProfile(data ? (data as unknown as Profile) : null);
       }
 
       setCheckingAuth(false);
@@ -141,34 +142,61 @@ export default function MyPage() {
     setLoading(false);
   };
 
+  /**
+   * ✅ 重要：プラン変更ボタン → “購入画面へ遷移”
+   * - 画面構成は崩さない（UIはそのまま）
+   * - 押したら Stripe Payment Link に飛ばす
+   * - Stripe側のリダイレクトURLで /billing/success に戻す（session_id 付き）
+   */
   type PlanAction = 'trial_to_starter' | 'trial_to_pro' | 'starter_to_pro' | 'pro_to_starter';
 
-  // ✅ ここが「完全版の中身」：押したらStripe購入画面へ遷移（UIは一切変えない）
-  const callPlanAction = async (action: PlanAction) => {
+  const goToCheckout = async (action: PlanAction) => {
     if (!profile) return;
 
     resetMsg();
     setPlanLoading(action);
 
     try {
-      // アクション → 遷移先URL
-      let redirectUrl: string | null = null;
-
-      if (action === 'trial_to_pro' || action === 'starter_to_pro') {
-        redirectUrl = STRIPE_BUY_PRO_URL;
-      } else if (action === 'trial_to_starter' || action === 'pro_to_starter') {
-        redirectUrl = STRIPE_BUY_STARTER_URL;
+      // ✅ 解約済みは購入させない（必要なら外してOK）
+      if (profile.is_canceled) {
+        setError('現在「解約手続き済み」です。購入前に解約状態をご確認ください。');
+        return;
       }
 
-      if (!redirectUrl) {
-        throw new Error('購入リンクが設定されていません。');
+      // ✅ 現在プランによって“同じ遷移”を押しても意味がない場合は止める
+      if (action === 'trial_to_starter' && profile.plan_status === 'paid') {
+        setError('すでに有料プランです。');
+        return;
+      }
+      if (action === 'trial_to_pro' && profile.plan_status === 'paid') {
+        setError('すでに有料プランです。');
+        return;
+      }
+      if (action === 'starter_to_pro' && profile.plan_tier === 'pro') {
+        setError('すでに Pro です。');
+        return;
+      }
+      if (action === 'pro_to_starter' && profile.plan_tier === 'starter') {
+        setError('すでに Starter です。');
+        return;
       }
 
-      // ✅ ここでStripeの購入画面へ
-      window.location.href = redirectUrl;
+      // ✅ 遷移先URLを決める
+      let url = '';
+      if (action === 'trial_to_starter') url = STRIPE_BUY_STARTER_URL;
+      if (action === 'trial_to_pro') url = STRIPE_BUY_PRO_URL;
+      if (action === 'starter_to_pro') url = STRIPE_BUY_PRO_URL;
+      if (action === 'pro_to_starter') url = STRIPE_BUY_STARTER_URL;
+
+      if (!url) throw new Error('購入URLが設定されていません。');
+
+      // ✅ ここで外部遷移（Payment Linkへ）
+      window.location.href = url;
     } catch (e: any) {
       console.error(e);
       setError(e?.message ?? '購入画面への遷移に失敗しました。');
+    } finally {
+      // 画面遷移するので基本不要だが、エラー時の復帰用に戻す
       setPlanLoading(null);
     }
   };
@@ -240,9 +268,7 @@ export default function MyPage() {
         >
           <div>
             <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>マイページ</h1>
-            <p style={{ fontSize: 13, color: '#6b7280' }}>
-              ご契約状況とプラン変更・紹介コードの確認ができます。
-            </p>
+            <p style={{ fontSize: 13, color: '#6b7280' }}>ご契約状況とプラン変更・紹介コードの確認ができます。</p>
           </div>
 
           <button
@@ -278,8 +304,7 @@ export default function MyPage() {
 
           {remainingDays !== null && (
             <p style={{ fontSize: 13, marginBottom: 8 }}>
-              残り利用可能日数：
-              <strong>{remainingDays > 0 ? `${remainingDays} 日` : '0 日（終了）'}</strong>
+              残り利用可能日数：<strong>{remainingDays > 0 ? `${remainingDays} 日` : '0 日（終了）'}</strong>
             </p>
           )}
 
@@ -318,7 +343,7 @@ export default function MyPage() {
 
           <div style={{ display: 'grid', gap: 8 }}>
             <button
-              onClick={() => callPlanAction('trial_to_starter')}
+              onClick={() => goToCheckout('trial_to_starter')}
               disabled={!!planLoading}
               style={planButtonStyle(planLoading === 'trial_to_starter')}
             >
@@ -326,7 +351,7 @@ export default function MyPage() {
             </button>
 
             <button
-              onClick={() => callPlanAction('trial_to_pro')}
+              onClick={() => goToCheckout('trial_to_pro')}
               disabled={!!planLoading}
               style={planButtonStyle(planLoading === 'trial_to_pro')}
             >
@@ -334,7 +359,7 @@ export default function MyPage() {
             </button>
 
             <button
-              onClick={() => callPlanAction('starter_to_pro')}
+              onClick={() => goToCheckout('starter_to_pro')}
               disabled={!!planLoading}
               style={planButtonStyle(planLoading === 'starter_to_pro')}
             >
@@ -342,13 +367,17 @@ export default function MyPage() {
             </button>
 
             <button
-              onClick={() => callPlanAction('pro_to_starter')}
+              onClick={() => goToCheckout('pro_to_starter')}
               disabled={!!planLoading}
               style={planButtonStyle(planLoading === 'pro_to_starter')}
             >
               Pro → Starter に変更
             </button>
           </div>
+
+          <p style={{ fontSize: 12, color: '#6b7280', marginTop: 10 }}>
+            ※ ボタンを押すと Stripe の購入画面へ移動します（支払い完了後、自動的にアプリへ戻ります）
+          </p>
         </section>
 
         <section
