@@ -34,6 +34,38 @@ export default function AuthPage() {
 
   const resetState = () => setErrorMsg(null);
 
+  // ✅ 追加：パスワードリセット（メール送信）
+  const handleResetPassword = async () => {
+    resetState();
+
+    if (!email) {
+      setErrorMsg('パスワードリセットにはメールアドレスの入力が必要です。');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const redirectTo = `${window.location.origin}/auth/reset`;
+
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo,
+      });
+
+      if (error) {
+        console.error('resetPassword error:', error);
+        setErrorMsg('パスワードリセットのメール送信に失敗しました。');
+        return;
+      }
+
+      alert('パスワードリセット用のメールを送信しました。受信箱をご確認ください。');
+    } catch (err) {
+      console.error('resetPassword unexpected error:', err);
+      setErrorMsg('予期しないエラーが発生しました。時間をおいて再度お試しください。');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     resetState();
@@ -425,6 +457,27 @@ export default function AuthPage() {
             >
               {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
             </button>
+
+            {/* ✅ 追加：ログイン時のみ表示（最小UI） */}
+            {isLogin && (
+              <button
+                type="button"
+                onClick={handleResetPassword}
+                disabled={loading}
+                style={{
+                  marginTop: 10,
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#6b7280',
+                  fontSize: 12,
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  textDecoration: 'underline',
+                  alignSelf: 'center',
+                }}
+              >
+                パスワードを忘れた方はこちら
+              </button>
+            )}
           </form>
 
           <p
