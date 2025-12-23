@@ -1,5 +1,6 @@
-import { Suspense } from "react";
-import ResetClient from "./ResetClient";
+// app/auth/reset/page.tsx
+import { Suspense } from 'react';
+import ResetClient from './reset-client';
 
 export default function ResetPage() {
   return (
