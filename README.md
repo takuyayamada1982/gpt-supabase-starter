@@ -10,4 +10,4 @@
    - NEXT_PUBLIC_SUPABASE_URL
    - NEXT_PUBLIC_SUPABASE_ANON_KEY
    - SUPABASE_SERVICE_ROLE_KEY
-3) デプロイ後 /login → /u → /admin
+3) デプロイ後 /login → /u → /admin　
