@@ -25,8 +25,8 @@ interface MonthlyRow {
 }
 
 interface AdminStatsResponse {
-  summary?: any; // ← API 側の snake_case / camelCase 両対応のため any で受ける
-  monthly?: any[];
+  summary?: Summary;
+  monthly?: MonthlyRow[];
 }
 
 interface UserProfile {
@@ -118,7 +118,7 @@ export default function AdminPage() {
 
   // ② 管理者として認証できたら admin API を叩く
   useEffect(() => {
-    if (!isMaster) return; // master 以外は API 呼ばない
+    if (!isMaster) return;
 
     const fetchAll = async () => {
       try {
@@ -193,47 +193,21 @@ export default function AdminPage() {
     );
   }
 
-  // ======== ここから summary / monthly を正規化して組み立てる ========
+  // ======== ここから安全な summary / monthly を組み立てる ========
 
-  const rawSummary: any = stats.summary ?? {};
+  const summary: Summary =
+    stats.summary ?? {
+      month: '—',
+      totalRequests: 0,
+      totalCost: 0,
+      countsByType: {},
+      costsByType: {},
+    };
 
-  const summary: Summary = {
-    month: rawSummary.month ?? '—',
-    totalRequests:
-      rawSummary.totalRequests ??
-      rawSummary.total_requests ??
-      0,
-    totalCost:
-      rawSummary.totalCost ??
-      rawSummary.total_cost ??
-      0,
-    countsByType:
-      rawSummary.countsByType ??
-      rawSummary.counts_by_type ??
-      {},
-    costsByType:
-      rawSummary.costsByType ??
-      rawSummary.costs_by_type ??
-      {},
-  };
+  const monthly: MonthlyRow[] = stats.monthly ?? [];
 
-  const monthlyRaw: any[] = stats.monthly ?? [];
-  const monthly: MonthlyRow[] = monthlyRaw.map((m) => ({
-    month: m.month ?? '—',
-    urlCount: m.urlCount ?? m.url_count ?? 0,
-    visionCount: m.visionCount ?? m.vision_count ?? 0,
-    chatCount: m.chatCount ?? m.chat_count ?? 0,
-    videoCount: m.videoCount ?? m.video_count ?? 0,
-    totalCost: m.totalCost ?? m.total_cost ?? 0,
-  }));
-
-  // === counts / costs を安全にマッピング ===
-  const countsRaw = (summary.countsByType ?? {}) as Partial<
-    Record<UsageType, number>
-  >;
-  const costsRaw = (summary.costsByType ?? {}) as Partial<
-    Record<UsageType, number>
-  >;
+  const countsRaw = summary.countsByType ?? {};
+  const costsRaw = summary.costsByType ?? {};
 
   const counts: Record<UsageType, number> = {
     url: countsRaw.url ?? 0,
@@ -362,7 +336,6 @@ export default function AdminPage() {
             gap: 16,
           }}
         >
-          {/* 利用回数 */}
           <Card title="今月の利用回数（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
@@ -408,7 +381,6 @@ export default function AdminPage() {
             </div>
           </Card>
 
-          {/* 金額内訳 */}
           <Card title="今月の金額内訳（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
@@ -513,7 +485,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* ユーザー一覧テーブル（プラン種別 + 利用内訳） */}
+        {/* ユーザー一覧テーブル */}
         <div style={{ marginTop: 24 }}>
           <Card title="ユーザー一覧（プラン種別・トライアル・今月の利用内訳）">
             <div
@@ -548,7 +520,7 @@ export default function AdminPage() {
                   {users.map((u) => {
                     const trialView = getTrialStatus(u);
                     const trialTypeLabel = getTrialTypeLabel(u.trial_type);
-                    const planLabel = getPlanTierLabel(u.plan_tier);
+                    const planLabel = getPlanTierLabel(u);
                     const regDate = formatDateYmd(u.registered_at);
 
                     const url = Number(u.monthly_url_count ?? 0);
@@ -609,9 +581,25 @@ function getTrialTypeLabel(trialType: string | null): string {
   return '-';
 }
 
-function getPlanTierLabel(planTier: string | null): string {
-  if (planTier === 'starter') return 'Starter';
-  if (planTier === 'pro') return 'Pro';
+// ★ ここを UserProfile 全体を見る形に変更
+function getPlanTierLabel(user: UserProfile): string {
+  const planStatus = user.plan_status;
+  const planTier = user.plan_tier;
+
+  // まだ有料契約していない
+  if (!planStatus || planStatus === 'trial') {
+    return '-';
+  }
+
+  // 有料契約中
+  if (planStatus === 'paid') {
+    if (planTier === 'starter') return 'Starter';
+    if (planTier === 'pro') return 'Pro';
+
+    // 古いレコードで plan_tier が null のものは Pro とみなす
+    return 'Pro';
+  }
+
   return '-';
 }
 
@@ -655,7 +643,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
 
   const remaining = trialDays - diffDays;
 
-  // 無料期間終了
   if (remaining <= 0) {
     const daysAgo = -remaining;
     return {
@@ -666,7 +653,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
-  // まもなく終了（残り1〜3日）
   if (remaining <= 3) {
     return {
       kind: 'trial_warning',
@@ -676,7 +662,6 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
     };
   }
 
-  // 通常の無料期間中
   if (trialType === 'referral') {
     return {
       kind: 'trial_ok',
@@ -694,7 +679,7 @@ function getTrialStatus(user: UserProfile): TrialStatusView {
   };
 }
 
-/* ===== 小さなコンポーネントたち ===== */
+/* ===== 小さなコンポーネント ===== */
 
 function FullScreenCenter(props: { children: React.ReactNode }) {
   return (
