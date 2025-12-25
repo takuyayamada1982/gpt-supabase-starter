@@ -64,4 +64,75 @@ export async function POST(req: NextRequest) {
     const secretKey = process.env.STRIPE_SECRET_KEY!;
     const isLiveKey = secretKey.startsWith('sk_live_');
 
-    if (isLiveKey && session.
+    if (isLiveKey && session.livemode !== true) {
+      return NextResponse.json(
+        { ok: false, error: 'Stripe session is not live mode' },
+        { status: 400 }
+      );
+    }
+    if (!isLiveKey && session.livemode !== false) {
+      return NextResponse.json(
+        { ok: false, error: 'Stripe session is not test mode' },
+        { status: 400 }
+      );
+    }
+
+    const { userId, email } = await resolveUserIdAndEmail(session);
+
+    // ★ ここで「どのアドレスに送る予定か」をログ出力
+    console.log('📨 will send account ID email to:', email);
+
+    const lineItemPrice =
+      session.line_items?.data[0]?.price as Stripe.Price | undefined;
+
+    const priceId =
+      lineItemPrice?.id ??
+      (session.metadata?.price_id as string | undefined);
+
+    if (!priceId) {
+      return NextResponse.json(
+        { ok: false, error: 'price_id missing' },
+        { status: 400 }
+      );
+    }
+
+    const { tier } = getPlanFromPriceId(priceId);
+
+    const now = new Date();
+    const validUntil = new Date(now);
+    validUntil.setMonth(validUntil.getMonth() + 1);
+
+    const accountId = await ensureAccountIdForUser(userId);
+
+    await updateUserPlan(userId, tier, validUntil.toISOString());
+
+    // 🔹 メール送信の成否も返す
+    let emailSent = false;
+    let emailError: string | null = null;
+    try {
+      // ★ 実際に送る直前もログ出力
+      console.log('📩 call sendAccountIdEmail:', { email, accountId });
+
+      await sendAccountIdEmail(email, accountId);
+      emailSent = true;
+    } catch (e: any) {
+      console.error('sendAccountIdEmail_error', e);
+      emailError = e?.message ?? 'unknown email error';
+    }
+
+    return NextResponse.json({
+      ok: true,
+      planTier: tier,
+      accountId,
+      validUntil: validUntil.toISOString(),
+      emailSent,
+      emailError,
+    });
+  } catch (e: any) {
+    console.error('stripe_confirm_error', e);
+    return NextResponse.json(
+      { ok: false, error: e?.message ?? 'unknown error' },
+      { status: 500 }
+    );
+  }
+}
