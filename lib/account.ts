@@ -11,7 +11,7 @@ const supabaseAdmin = createClient(
   }
 );
 
-// プロフィールからメールアドレスを取る
+// プロフィールからメールアドレスを取る（id → email）
 export async function getUserEmailById(userId: string): Promise<string> {
   const { data, error } = await supabaseAdmin
     .from('profiles')
@@ -26,6 +26,23 @@ export async function getUserEmailById(userId: string): Promise<string> {
   }
 
   return data.email as string;
+}
+
+// メールアドレスからユーザーIDを取る（email → id）
+export async function getUserIdByEmail(email: string): Promise<string> {
+  const { data, error } = await supabaseAdmin
+    .from('profiles')
+    .select('id')
+    .eq('email', email)
+    .single();
+
+  if (error || !data?.id) {
+    throw new Error(
+      `user_not_found_by_email: ${error?.message ?? 'no profile with email'}`
+    );
+  }
+
+  return data.id as string;
 }
 
 // 必要であれば（トライアル時など）5桁アカウントIDを採番して profiles に保存する
@@ -77,7 +94,7 @@ export async function ensureAccountIdForUser(
   return nextAccountId;
 }
 
-// プラン更新もここから使えるように helper を出しておく
+// プラン更新用ヘルパー
 export async function updateUserPlan(
   userId: string,
   planTier: 'starter' | 'pro',
