@@ -90,7 +90,7 @@ export default function AdminPage() {
           return;
         }
 
-        // profiles は email ベースで紐付け（/u と同じ思想）
+        // profiles は email ベースで紐付け
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -118,7 +118,7 @@ export default function AdminPage() {
 
   // ② 管理者として認証できたら admin API を叩く
   useEffect(() => {
-    if (!isMaster) return;
+    if (!isMaster) return; // master 以外は API 呼ばない
 
     const fetchAll = async () => {
       try {
@@ -143,7 +143,11 @@ export default function AdminPage() {
         console.log('admin/users raw:', usersJson);
 
         setStats(statsJson);
-        setUsers(usersJson.users ?? []);
+
+        // ⭐ ここがポイント：deleted_at が入っているユーザーは一覧から除外
+        const rawUsers = usersJson.users ?? [];
+        const activeUsers = rawUsers.filter((u) => !u.deleted_at);
+        setUsers(activeUsers);
       } catch (err: any) {
         console.error('admin fetchAll error:', err);
         setErrorMsg('管理情報の取得に失敗しました');
@@ -193,7 +197,7 @@ export default function AdminPage() {
     );
   }
 
-  // ======== ここから安全な summary / monthly を組み立てる ========
+  // ======== summary / monthly を組み立て ========
 
   const summary: Summary =
     stats.summary ?? {
@@ -336,6 +340,7 @@ export default function AdminPage() {
             gap: 16,
           }}
         >
+          {/* 利用回数 */}
           <Card title="今月の利用回数（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
@@ -381,6 +386,7 @@ export default function AdminPage() {
             </div>
           </Card>
 
+          {/* 金額内訳 */}
           <Card title="今月の金額内訳（種別別）">
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {typeOrder.map((t) => {
@@ -520,7 +526,7 @@ export default function AdminPage() {
                   {users.map((u) => {
                     const trialView = getTrialStatus(u);
                     const trialTypeLabel = getTrialTypeLabel(u.trial_type);
-                    const planLabel = getPlanTierLabel(u);
+                    const planLabel = getPlanTierLabel(u.plan_tier);
                     const regDate = formatDateYmd(u.registered_at);
 
                     const url = Number(u.monthly_url_count ?? 0);
@@ -581,25 +587,9 @@ function getTrialTypeLabel(trialType: string | null): string {
   return '-';
 }
 
-// ★ ここを UserProfile 全体を見る形に変更
-function getPlanTierLabel(user: UserProfile): string {
-  const planStatus = user.plan_status;
-  const planTier = user.plan_tier;
-
-  // まだ有料契約していない
-  if (!planStatus || planStatus === 'trial') {
-    return '-';
-  }
-
-  // 有料契約中
-  if (planStatus === 'paid') {
-    if (planTier === 'starter') return 'Starter';
-    if (planTier === 'pro') return 'Pro';
-
-    // 古いレコードで plan_tier が null のものは Pro とみなす
-    return 'Pro';
-  }
-
+function getPlanTierLabel(planTier: string | null): string {
+  if (planTier === 'starter') return 'Starter';
+  if (planTier === 'pro') return 'Pro';
   return '-';
 }
 
@@ -614,7 +604,7 @@ function formatDateYmd(value: string | null): string {
 }
 
 function getTrialStatus(user: UserProfile): TrialStatusView {
-  // 契約者なら常に「契約中」扱い
+  // 契約者なら常に「契約中」
   if (user.plan_status === 'paid') {
     return {
       kind: 'paid',
