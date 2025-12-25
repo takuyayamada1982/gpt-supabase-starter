@@ -1,11 +1,9 @@
-// lib/mail.ts
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
-// 例: "Auto post studio <noreply@auto-post-studio.com>"
 const MAIL_FROM =
-  process.env.MAIL_FROM ?? 'Auto post studio <noreply@example.com>';
+  process.env.MAIL_FROM ?? 'Auto post studio <onboarding@resend.dev>';
 
 export async function sendAccountIdEmail(to: string, accountId: string) {
   const subject = '【Auto post studio】アカウントIDのご案内';
