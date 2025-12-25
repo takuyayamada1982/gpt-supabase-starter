@@ -123,8 +123,8 @@ export default function BillingSuccessClient({ sessionId }: Props) {
                     {accountId}
                   </p>
                   <p className="text-xs text-slate-500">
-                    ログイン時に必要になります。メモを取るかスクリーンショットで保存しておいてください。
-                    同じ内容をメールでもお送りしています。
+                    ログイン時に必要になります。必ずメモを取るかスクリーンショットで保存しておいてください。
+                    メールではお送りしておりません。
                   </p>
                 </div>
               )}
