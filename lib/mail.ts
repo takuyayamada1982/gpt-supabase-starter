@@ -1,9 +1,14 @@
+// lib/mail.ts
 import { Resend } from 'resend';
 
 const resend = new Resend(process.env.RESEND_API_KEY!);
 
+// 例: "Auto post studio <onboarding@resend.dev>"
 const MAIL_FROM =
   process.env.MAIL_FROM ?? 'Auto post studio <onboarding@resend.dev>';
+
+// デバッグ用に、常に自分のアドレスにも送っておきたい場合の宛先
+const DEBUG_MAIL_TO = process.env.DEBUG_MAIL_TO ?? '';
 
 export async function sendAccountIdEmail(to: string, accountId: string) {
   const subject = '【Auto post studio】アカウントIDのご案内';
@@ -21,9 +26,15 @@ export async function sendAccountIdEmail(to: string, accountId: string) {
     '本メールにお心当たりがない場合は、このメールを破棄してください。',
   ].join('\n');
 
+  // 🔹 宛先を組み立てる：ユーザー + デバッグ用
+  const recipients: string | string[] =
+    DEBUG_MAIL_TO && DEBUG_MAIL_TO !== to
+      ? [to, DEBUG_MAIL_TO]
+      : to;
+
   await resend.emails.send({
     from: MAIL_FROM,
-    to,
+    to: recipients,
     subject,
     text,
   });
