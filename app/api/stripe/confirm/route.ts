@@ -4,6 +4,7 @@ import Stripe from 'stripe';
 import {
   ensureAccountIdForUser,
   getUserEmailById,
+  getUserIdByEmail,
   updateUserPlan,
 } from '@/lib/account';
 import { sendAccountIdEmail } from '@/lib/mail';
@@ -15,6 +16,7 @@ const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
 const PRICE_STARTER = process.env.STRIPE_PRICE_STARTER!;
 const PRICE_PRO = process.env.STRIPE_PRICE_PRO!;
 
+// price_id → プラン種別
 function getPlanFromPriceId(priceId: string) {
   if (priceId === PRICE_STARTER) {
     return { tier: 'starter' as const };
@@ -23,6 +25,33 @@ function getPlanFromPriceId(priceId: string) {
     return { tier: 'pro' as const };
   }
   throw new Error(`unknown_plan_price: ${priceId}`);
+}
+
+// Checkout Session から userId と email を特定する
+// 1) metadata.userId があればそれを優先
+// 2) 無い場合は Stripe の customer email から profiles を検索
+async function resolveUserIdAndEmail(session: Stripe.Checkout.Session): Promise<{
+  userId: string;
+  email: string;
+}> {
+  const metaUserId = session.metadata?.userId as string | undefined;
+  const sessionEmail =
+    session.customer_details?.email ?? session.customer_email ?? undefined;
+
+  // ① userId が事前に埋め込まれているパターン（APIで Checkout Session 作成）
+  if (metaUserId) {
+    const email = await getUserEmailById(metaUserId);
+    return { userId: metaUserId, email };
+  }
+
+  // ② Payment Link などで metadata.userId が無いパターン
+  //    → email から Supabase profiles を検索して userId を取得
+  if (sessionEmail) {
+    const userId = await getUserIdByEmail(sessionEmail);
+    return { userId, email: sessionEmail };
+  }
+
+  throw new Error('cannot_resolve_user: neither metadata.userId nor email');
 }
 
 export async function POST(req: NextRequest) {
@@ -56,14 +85,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ユーザーID（metadata に入れている前提）
-    const userId = session.metadata?.userId;
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'userId missing from metadata' },
-        { status: 400 }
-      );
-    }
+    // 決済したユーザーを特定（trialだろうが本会員だろうがここで1ユーザーに絞る）
+    const { userId, email } = await resolveUserIdAndEmail(session);
 
     // price_id を取得（line_items から or metadata から）
     const lineItemPrice =
@@ -87,10 +110,10 @@ export async function POST(req: NextRequest) {
     const validUntil = new Date(now);
     validUntil.setMonth(validUntil.getMonth() + 1);
 
-    // 1) 必要なら 5桁アカウントIDを採番して profiles に保存
+    // 1) 必要なら 5桁アカウントIDを採番（trial の 99999 → 正式ID）
     const accountId = await ensureAccountIdForUser(userId);
 
-    // 2) プラン情報を更新
+    // 2) プラン情報を更新（trial → starter/pro もここで一括反映）
     await updateUserPlan(
       userId,
       tier,
@@ -99,11 +122,10 @@ export async function POST(req: NextRequest) {
 
     // 3) ユーザーにメールでアカウントIDを送信
     try {
-      const email = await getUserEmailById(userId);
       await sendAccountIdEmail(email, accountId);
     } catch (mailError) {
       console.error('sendAccountIdEmail_error', mailError);
-      // メール失敗しても課金は成功扱いにする想定なら、ここは握りつぶし
+      // メール失敗しても課金は成功扱いにするならここで終了
     }
 
     // フロント（billing/success）で使う
