@@ -90,6 +90,7 @@ export default function MyPage() {
     fetchProfile();
   }, [router]);
 
+  // 🔸 有効期限までの残日数（トライアル・解約済みで使う）
   const remainingDays = useMemo(() => {
     if (!profile?.plan_valid_until) return null;
     const now = new Date();
@@ -98,6 +99,7 @@ export default function MyPage() {
     return Math.ceil(diffMs / (1000 * 60 * 60 * 24));
   }, [profile]);
 
+  // 🔸 プラン表示ラベル
   const planLabel = useMemo(() => {
     if (!profile) return '未契約';
     if (profile.plan_status === 'trial') return 'トライアル';
@@ -107,6 +109,53 @@ export default function MyPage() {
       return '有料プラン';
     }
     return '未契約';
+  }, [profile]);
+
+  // 🔸 日付のラベルと表示文言（ここを追加）
+  const { dateLabel, dateText, showRemaining } = useMemo(() => {
+    if (!profile?.plan_valid_until) {
+      return {
+        dateLabel: '契約終了日',
+        dateText: '未設定',
+        showRemaining: false,
+      };
+    }
+
+    const d = new Date(profile.plan_valid_until);
+    const formatted = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+
+    // トライアル中：終了日＋残日数
+    if (profile.plan_status === 'trial') {
+      return {
+        dateLabel: 'トライアル終了日',
+        dateText: formatted,
+        showRemaining: true,
+      };
+    }
+
+    // 有料プラン
+    if (profile.plan_status === 'paid') {
+      // 解約済み：ご利用可能期限＋残日数
+      if (profile.is_canceled) {
+        return {
+          dateLabel: 'ご利用可能期限',
+          dateText: formatted,
+          showRemaining: true,
+        };
+      }
+      // 継続中：次回更新日だけ表示（残日数は出さない）
+      return {
+        dateLabel: '次回更新日',
+        dateText: formatted,
+        showRemaining: false,
+      };
+    }
+
+    return {
+      dateLabel: '契約終了日',
+      dateText: formatted,
+      showRemaining: false,
+    };
   }, [profile]);
 
   const referralUrl = useMemo(() => {
@@ -144,9 +193,6 @@ export default function MyPage() {
 
   /**
    * ✅ 重要：プラン変更ボタン → “購入画面へ遷移”
-   * - 画面構成は崩さない（UIはそのまま）
-   * - 押したら Stripe Payment Link に飛ばす
-   * - Stripe側のリダイレクトURLで /billing/success に戻す（session_id 付き）
    */
   type PlanAction = 'trial_to_starter' | 'trial_to_pro' | 'starter_to_pro' | 'pro_to_starter';
 
@@ -196,7 +242,6 @@ export default function MyPage() {
       console.error(e);
       setError(e?.message ?? '購入画面への遷移に失敗しました。');
     } finally {
-      // 画面遷移するので基本不要だが、エラー時の復帰用に戻す
       setPlanLoading(null);
     }
   };
@@ -286,6 +331,7 @@ export default function MyPage() {
           </button>
         </header>
 
+        {/* 契約状況 */}
         <section
           style={{
             backgroundColor: '#ffffff',
@@ -299,17 +345,24 @@ export default function MyPage() {
 
           <p style={{ fontSize: 13, marginBottom: 4 }}>メールアドレス： {profile?.email ?? '-'}</p>
           <p style={{ fontSize: 13, marginBottom: 4 }}>現在のプラン： {planLabel}</p>
-          <p style={{ fontSize: 13, marginBottom: 4 }}>契約終了日：{profile?.plan_valid_until ?? '未設定'}</p>
-          <p style={{ fontSize: 13, marginBottom: 8 }}>解約状態：{profile?.is_canceled ? '解約手続き済み' : '利用中'}</p>
+          <p style={{ fontSize: 13, marginBottom: 4 }}>
+            {dateLabel}：{dateText}
+          </p>
+          <p style={{ fontSize: 13, marginBottom: 8 }}>
+            解約状態：{profile?.is_canceled ? '解約手続き済み' : '利用中'}
+          </p>
 
-          {remainingDays !== null && (
+          {/* 残日数は「トライアル中」または「解約手続き済み」のときだけ表示 */}
+          {showRemaining && remainingDays !== null && (
             <p style={{ fontSize: 13, marginBottom: 8 }}>
-              残り利用可能日数：<strong>{remainingDays > 0 ? `${remainingDays} 日` : '0 日（終了）'}</strong>
+              残り利用可能日数：
+              <strong>{remainingDays > 0 ? `${remainingDays} 日` : '0 日（終了）'}</strong>
             </p>
           )}
 
           <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
-            解約後も、契約終了日まではサービスを利用できます。契約終了日を過ぎるとログインができなくなります。
+            解約手続きを行った場合も、{dateLabel}まではサービスをご利用いただけます。
+            期限を過ぎるとログインができなくなります。
           </p>
 
           <button
@@ -330,6 +383,7 @@ export default function MyPage() {
           </button>
         </section>
 
+        {/* プラン変更 */}
         <section
           style={{
             backgroundColor: '#ffffff',
@@ -380,6 +434,7 @@ export default function MyPage() {
           </p>
         </section>
 
+        {/* 紹介コード */}
         <section
           style={{
             backgroundColor: '#ffffff',
