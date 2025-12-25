@@ -30,7 +30,9 @@ function getPlanFromPriceId(priceId: string) {
 // Checkout Session から userId と email を特定する
 // 1) metadata.userId があればそれを優先
 // 2) 無い場合は Stripe の customer email から profiles を検索
-async function resolveUserIdAndEmail(session: Stripe.Checkout.Session): Promise<{
+async function resolveUserIdAndEmail(
+  session: Stripe.Checkout.Session
+): Promise<{
   userId: string;
   email: string;
 }> {
@@ -38,14 +40,13 @@ async function resolveUserIdAndEmail(session: Stripe.Checkout.Session): Promise<
   const sessionEmail =
     session.customer_details?.email ?? session.customer_email ?? undefined;
 
-  // ① userId が事前に埋め込まれているパターン（APIで Checkout Session 作成）
+  // ① API で Checkout Session を作っているパターン
   if (metaUserId) {
     const email = await getUserEmailById(metaUserId);
     return { userId: metaUserId, email };
   }
 
-  // ② Payment Link などで metadata.userId が無いパターン
-  //    → email から Supabase profiles を検索して userId を取得
+  // ② Payment Link パターン（metadata.userId が無い）
   if (sessionEmail) {
     const userId = await getUserIdByEmail(sessionEmail);
     return { userId, email: sessionEmail };
@@ -70,22 +71,26 @@ export async function POST(req: NextRequest) {
       expand: ['line_items.data.price'],
     });
 
-    // prod / preview 混在防止（livemodeチェック）
-    const isProd = process.env.VERCEL_ENV === 'production';
-    if (isProd && session.livemode !== true) {
+    // ✅ ここを修正：VERCEL_ENV ではなく Stripeキーの種類で判定
+    const secretKey = process.env.STRIPE_SECRET_KEY!;
+    const isLiveKey = secretKey.startsWith('sk_live_');
+
+    if (isLiveKey && session.livemode !== true) {
+      // liveキーなのに testセッションを読もうとしている
       return NextResponse.json(
         { error: 'Stripe session is not live mode' },
         { status: 400 }
       );
     }
-    if (!isProd && session.livemode !== false) {
+    if (!isLiveKey && session.livemode !== false) {
+      // testキーなのに liveセッションを読もうとしている
       return NextResponse.json(
         { error: 'Stripe session is not test mode' },
         { status: 400 }
       );
     }
 
-    // 決済したユーザーを特定（trialだろうが本会員だろうがここで1ユーザーに絞る）
+    // 決済したユーザーを特定（trial でも本会員でもここで1ユーザーに絞る）
     const { userId, email } = await resolveUserIdAndEmail(session);
 
     // price_id を取得（line_items から or metadata から）
@@ -114,18 +119,14 @@ export async function POST(req: NextRequest) {
     const accountId = await ensureAccountIdForUser(userId);
 
     // 2) プラン情報を更新（trial → starter/pro もここで一括反映）
-    await updateUserPlan(
-      userId,
-      tier,
-      validUntil.toISOString()
-    );
+    await updateUserPlan(userId, tier, validUntil.toISOString());
 
     // 3) ユーザーにメールでアカウントIDを送信
     try {
       await sendAccountIdEmail(email, accountId);
     } catch (mailError) {
       console.error('sendAccountIdEmail_error', mailError);
-      // メール失敗しても課金は成功扱いにするならここで終了
+      // メール失敗しても課金は成功扱いにするならここは握りつぶし
     }
 
     // フロント（billing/success）で使う
