@@ -7,13 +7,14 @@ const resend = new Resend(process.env.RESEND_API_KEY!);
 // テスト送信先：
 // 1. Vercel に DEBUG_MAIL_TO を設定していればそれを使う
 // 2. なければこのハードコードされたアドレスを使う
-const FALLBACK_TO = 't.yamada@tymean.com'; // ← デモ用メールアドレスに書き換えてOK
+const FALLBACK_TO = 'takuyayamada1982@gmail.com'; // ★ここを実際に受信できるアドレスに
 
 export async function GET() {
   try {
     const to = process.env.DEBUG_MAIL_TO ?? FALLBACK_TO;
 
-    if (!to || to === 't.yamada@tymean.com') {
+    // ★ 単純に「空だったらエラー」に変更
+    if (!to) {
       return NextResponse.json(
         {
           error:
