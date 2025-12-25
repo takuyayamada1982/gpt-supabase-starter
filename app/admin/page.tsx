@@ -24,10 +24,9 @@ interface MonthlyRow {
   totalCost: number | null;
 }
 
-// ← summary / monthly を optional にしておく
 interface AdminStatsResponse {
-  summary?: Summary;
-  monthly?: MonthlyRow[];
+  summary?: any; // ← API 側の snake_case / camelCase 両対応のため any で受ける
+  monthly?: any[];
 }
 
 interface UserProfile {
@@ -194,22 +193,47 @@ export default function AdminPage() {
     );
   }
 
-  // ======== ここから安全な summary / monthly を組み立てる ========
+  // ======== ここから summary / monthly を正規化して組み立てる ========
 
-  const summary: Summary =
-    stats.summary ?? {
-      month: '—',
-      totalRequests: 0,
-      totalCost: 0,
-      countsByType: {},
-      costsByType: {},
-    };
+  const rawSummary: any = stats.summary ?? {};
 
-  const monthly: MonthlyRow[] = stats.monthly ?? [];
+  const summary: Summary = {
+    month: rawSummary.month ?? '—',
+    totalRequests:
+      rawSummary.totalRequests ??
+      rawSummary.total_requests ??
+      0,
+    totalCost:
+      rawSummary.totalCost ??
+      rawSummary.total_cost ??
+      0,
+    countsByType:
+      rawSummary.countsByType ??
+      rawSummary.counts_by_type ??
+      {},
+    costsByType:
+      rawSummary.costsByType ??
+      rawSummary.costs_by_type ??
+      {},
+  };
+
+  const monthlyRaw: any[] = stats.monthly ?? [];
+  const monthly: MonthlyRow[] = monthlyRaw.map((m) => ({
+    month: m.month ?? '—',
+    urlCount: m.urlCount ?? m.url_count ?? 0,
+    visionCount: m.visionCount ?? m.vision_count ?? 0,
+    chatCount: m.chatCount ?? m.chat_count ?? 0,
+    videoCount: m.videoCount ?? m.video_count ?? 0,
+    totalCost: m.totalCost ?? m.total_cost ?? 0,
+  }));
 
   // === counts / costs を安全にマッピング ===
-  const countsRaw = summary.countsByType ?? {};
-  const costsRaw = summary.costsByType ?? {};
+  const countsRaw = (summary.countsByType ?? {}) as Partial<
+    Record<UsageType, number>
+  >;
+  const costsRaw = (summary.costsByType ?? {}) as Partial<
+    Record<UsageType, number>
+  >;
 
   const counts: Record<UsageType, number> = {
     url: countsRaw.url ?? 0,
