@@ -34,7 +34,7 @@ export default function AuthPage() {
 
   const resetState = () => setErrorMsg(null);
 
-  // ✅ 追加：パスワードリセット（メール送信）
+  // ✅ パスワードリセット（メール送信）
   const handleResetPassword = async () => {
     resetState();
 
@@ -98,12 +98,12 @@ export default function AuthPage() {
 
         const user = data.user;
 
-        // profiles からアカウントIDが一致するか確認（email + account_id でチェック）
+        // ✅ profiles から「自分のUUID + account_id」でチェックする
         const { data: profile, error: profileError } = await supabase
           .from('profiles')
-          .select('*')
-          .eq('email', user.email) // ★ email で紐付け
-          .eq('account_id', accountId) // ★ 入力されたアカウントID
+          .select('id, account_id')
+          .eq('id', user.id)          // ← UUID で紐付け（RLS: auth.uid() = id）
+          .eq('account_id', accountId) // ← 入力されたアカウントID
           .maybeSingle();
 
         if (profileError) {
@@ -130,33 +130,16 @@ export default function AuthPage() {
           password,
         });
 
+        // ✅ 判定は「auth.signUp の結果だけ」にする
         if (error || !data.user) {
           console.error('signUp error:', error);
           setErrorMsg('新規登録に失敗しました。すでに登録済みの可能性があります。');
           return;
         }
 
-        const user = data.user;
+        // ✅ profiles は DBトリガーが自動で作成するので、ここでは何もしない
+        //    （id / email / account_id = 99999 が自動で入る）
 
-        // profiles に最低限の情報を追加しつつ、account_id = '99999' を登録
-        const { error: upsertError } = await supabase.from('profiles').upsert(
-          {
-            id: user.id,
-            email: user.email,
-            account_id: '99999', // ★ 無料期間中の共通アカウントID
-          },
-          {
-            onConflict: 'id',
-          }
-        );
-
-        if (upsertError) {
-          console.warn('profiles upsert error:', upsertError.message);
-          setErrorMsg('プロフィール情報の登録に失敗しました。');
-          return;
-        }
-
-        // メッセージ表示 → ログイン画面に切り替え
         alert(
           '新規アカウントが発行されました。\n\n' +
             '無料期間中のアカウントIDは「99999」をお使いください。\n' +
@@ -166,7 +149,7 @@ export default function AuthPage() {
         // ログインモードへ切り替え & 99999 をプリセット
         setMode('login');
         setAccountId('99999');
-        // email / password はそのまま残しておくと、すぐにログインしやすい
+        // email / password は残しておく（すぐログインできるように）
 
         return;
       }
@@ -187,7 +170,6 @@ export default function AuthPage() {
         alignItems: 'center',
         justifyContent: 'center',
         fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-        // 淡い色のグラデーション背景（前と同じ雰囲気）
         background:
           'radial-gradient(circle at 10% 20%, #ffb8d9 0, transparent 55%),' +
           'radial-gradient(circle at 80% 25%, #b7e4ff 0, transparent 55%),' +
@@ -202,13 +184,13 @@ export default function AuthPage() {
 
       <section
         style={{
-          position: 'relative', // サインインラベル用
+          position: 'relative',
           width: '100%',
           maxWidth: '460px',
           backgroundColor: 'rgba(255,255,255,0.96)',
           borderRadius: '20px',
           border: '1.6px solid rgba(140,140,140,0.28)',
-          padding: '40px 36px 42px', // 左右36px
+          padding: '40px 36px 42px',
           boxShadow:
             '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
           minHeight: '640px',
@@ -221,7 +203,7 @@ export default function AuthPage() {
           style={{
             position: 'absolute',
             top: 16,
-            left: 36, // カードpadding左と揃える
+            left: 36,
             fontSize: 13,
             fontWeight: 500,
             letterSpacing: '0.08em',
@@ -458,7 +440,6 @@ export default function AuthPage() {
               {loading ? '処理中…' : isLogin ? 'ログイン' : '新規登録'}
             </button>
 
-            {/* ✅ 追加：ログイン時のみ表示（最小UI） */}
             {isLogin && (
               <button
                 type="button"
@@ -495,7 +476,7 @@ export default function AuthPage() {
           </p>
         </div>
 
-        {/* フェードアニメーション（ログイン⇄新規登録切り替え時） */}
+        {/* フェードアニメーション */}
         <style jsx>{`
           .fade-wrapper {
             animation: fadeInUp 0.22s ease-out;
