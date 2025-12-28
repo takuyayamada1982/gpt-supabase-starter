@@ -81,22 +81,34 @@ export default function AuthPage() {
 
     setLoading(true);
     try {
-      if (isLogin) {
-        // -----------------------------
-        // ログイン処理
-        // -----------------------------
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
+     if (isLogin) {
+  // -----------------------------
+  // ログイン処理
+  // -----------------------------
+  const { data, error } = await supabase.auth.signInWithPassword({
+    email,
+    password,
+  });
 
-        if (error || !data.user) {
-          console.error('signIn error:', error);
-          setErrorMsg('メールアドレスまたはパスワードが正しくありません。');
-          return;
-        }
+  if (error || !data.user) {
+    const msg = (error?.message || '').toLowerCase();
 
-        const user = data.user;
+    // 🔹メール未確認のとき専用メッセージ
+    if (msg.includes('email') && msg.includes('confirm')) {
+      setErrorMsg(
+        'メールアドレスが確認されていません。届いた確認メールのリンクをクリックしてから、再度ログインしてください。'
+      );
+    } else {
+      setErrorMsg(
+        'メールアドレスまたはパスワードが正しくありません。'
+      );
+    }
+
+    return;
+  }
+
+  const user = data.user;
+
 
         // ✅ profiles から「自分のUUID + account_id」でチェックする
         const { data: profile, error: profileError } = await supabase
