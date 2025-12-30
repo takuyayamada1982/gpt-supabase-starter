@@ -9,50 +9,25 @@ export default function ResetPasswordPage() {
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // ✅ リセットメールのリンクで戻ってきたら session を張る
+  // ✅ リセットメールのリンクで戻ってきたら code を session に交換
   useEffect(() => {
     (async () => {
       try {
-        const url = new URL(window.location.href);
-
-        // ① ?code=XXXXX が付いているパターン（PKCE）
-        const params = new URLSearchParams(url.search);
+        const params = new URLSearchParams(window.location.search);
         const code = params.get('code');
 
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) {
-            console.error('exchangeCodeForSession error:', error);
-            setMsg(
-              'リンクの有効期限が切れている可能性があります。ログイン画面から再度「パスワードを忘れた方はこちら」をお試しください。'
-            );
-          }
-          return;
-        }
+        // code が無い場合（直アクセス等）はそのまま入力させる（最小）
+        if (!code) return;
 
-        // ② #access_token=...&refresh_token=...&type=recovery のパターン
-        if (url.hash && url.hash.length > 1) {
-          const hashParams = new URLSearchParams(url.hash.substring(1));
-          const type = hashParams.get('type');
-          const accessToken = hashParams.get('access_token');
-          const refreshToken = hashParams.get('refresh_token');
-
-          if (type === 'recovery' && accessToken && refreshToken) {
-            const { error } = await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            });
-            if (error) {
-              console.error('setSession error:', error);
-              setMsg(
-                'リンクの有効期限が切れているか、すでに使用済みの可能性があります。ログイン画面から再度お試しください。'
-              );
-            }
-          }
+        const { error } = await supabase.auth.exchangeCodeForSession(code);
+        if (error) {
+          console.error('exchangeCodeForSession error:', error);
+          setMsg(
+            'リンクの有効期限が切れている可能性があります。ログイン画面から再度「パスワードを忘れた方はこちら」をお試しください。'
+          );
         }
-        // ③ どちらも付いていない場合は、既存セッションがある前提でそのまま進む
       } catch (e) {
-        console.error('session setup unexpected error:', e);
+        console.error('exchangeCodeForSession unexpected error:', e);
         setMsg('予期しないエラーが発生しました。時間をおいて再度お試しください。');
       }
     })();
@@ -77,15 +52,21 @@ export default function ResetPasswordPage() {
 
       if (error) {
         console.error('updateUser error:', error);
-        // error.message もそのまま出しておくと原因が分かりやすい
-        setMsg(
-          `更新に失敗しました。リンクを開き直してからもう一度お試しください。（${error.message}）`
-        );
+
+        // 🔽 ここで「旧パスワードと同じ」エラーを日本語に変換
+        if (
+          error.message?.toLowerCase().includes('different from the old password')
+        ) {
+          setMsg('以前と同じパスワードは使用できません。別のパスワードを設定してください。');
+        } else {
+          setMsg('更新に失敗しました。リセットを再度お試しください。');
+        }
+
         return;
       }
 
       setMsg('パスワードを更新しました。ログイン画面に戻ってログインしてください。');
-    } catch (err: any) {
+    } catch (err) {
       console.error('updateUser unexpected error:', err);
       setMsg('予期しないエラーが発生しました。時間をおいて再度お試しください。');
     } finally {
@@ -117,7 +98,8 @@ export default function ResetPasswordPage() {
           borderRadius: '20px',
           border: '1.6px solid rgba(140,140,140,0.28)',
           padding: '40px 36px 42px',
-          boxShadow: '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
+          boxShadow:
+            '0 14px 40px rgba(0,0,0,0.07), 0 0 0 4px rgba(255,255,255,0.45)',
           display: 'flex',
           flexDirection: 'column',
         }}
