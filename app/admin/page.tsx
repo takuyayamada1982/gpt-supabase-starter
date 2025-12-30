@@ -17,8 +17,7 @@ interface MonthlyRow {
   visionCount: number | null;
   chatCount: number | null;
   videoCount: number | null;
-  // 料金はフロント側で計算するので totalCost は使わない
-  totalCost?: number | null;
+  totalCost?: number | null; // 料金はフロントで再計算するので参照しない
 }
 
 interface AdminStatsResponse {
@@ -63,7 +62,7 @@ interface TrialStatusView {
   textColor: string;
 }
 
-// 単価定義（全画面で共通利用）
+// 単価定義
 const UNIT_PRICE: Record<UsageType, number> = {
   url: 0.7,
   vision: 1.0,
@@ -95,7 +94,6 @@ export default function AdminPage() {
           return;
         }
 
-        // profiles は email ベースで紐付け
         const { data: profile, error } = await supabase
           .from('profiles')
           .select('is_master')
@@ -149,7 +147,7 @@ export default function AdminPage() {
 
         setStats(statsJson);
 
-        // deleted_at が入っているユーザーは一覧から除外
+        // deleted_at ユーザーは除外
         const rawUsers = usersJson.users ?? [];
         const activeUsers = rawUsers.filter((u) => !u.deleted_at);
         setUsers(activeUsers);
@@ -202,13 +200,10 @@ export default function AdminPage() {
     );
   }
 
-  // ======== 月次テーブル用データ ========
-
-  const monthly: MonthlyRow[] = stats.monthly ?? [];
+  // ======== 対象月ラベル ========
   const monthLabel = stats.summary?.month ?? '—';
 
   // ======== ユーザー一覧から「今月」の利用状況を集計（グラフ・KPI用） ========
-
   let totalUrl = 0;
   let totalVision = 0;
   let totalChat = 0;
@@ -266,8 +261,7 @@ export default function AdminPage() {
 
   const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
 
-  // ======== ユーザー系 KPI（全体のユーザー数） ========
-
+  // ======== ユーザー系 KPI ========
   const totalUsers = users.length;
   const paidUsers = users.filter((u) => u.plan_status === 'paid').length;
   const trialUsers = users.filter((u) => u.plan_status === 'trial').length;
@@ -279,6 +273,40 @@ export default function AdminPage() {
     const video = Number(u.monthly_video_count ?? 0);
     return url + vis + chat + video > 0;
   }).length;
+
+  // ======== 月次一覧テーブル用データ ========
+  const baseMonthly: MonthlyRow[] = stats.monthly ?? [];
+
+  // 対象月の行を、ユーザー集計した今月分の回数で上書き
+  let hasCurrentRow = false;
+  let monthlyRows: MonthlyRow[] = baseMonthly.map((m) => {
+    if (m.month === monthLabel) {
+      hasCurrentRow = true;
+      return {
+        ...m,
+        urlCount: counts.url,
+        visionCount: counts.vision,
+        chatCount: counts.chat,
+        videoCount: counts.video,
+      };
+    }
+    return m;
+  });
+
+  // API側に対象月が無い場合は、先頭に 1 行だけ追加
+  if (!hasCurrentRow && monthLabel !== '—') {
+    monthlyRows = [
+      {
+        month: monthLabel,
+        urlCount: counts.url,
+        visionCount: counts.vision,
+        chatCount: counts.chat,
+        videoCount: counts.video,
+        totalCost: null,
+      },
+      ...monthlyRows,
+    ];
+  }
 
   return (
     <div
@@ -473,7 +501,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* 月次一覧テーブル（フロントで料金再計算） */}
+        {/* 月次一覧テーブル（対象月はユーザー集計値で上書き済み） */}
         <div style={{ marginTop: 24 }}>
           <Card title="月次の利用・料金一覧（最大24ヶ月）">
             <div
@@ -501,14 +529,13 @@ export default function AdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {monthly.map((m) => {
+                  {monthlyRows.map((m) => {
                     const url = Number(m.urlCount ?? 0);
                     const vis = Number(m.visionCount ?? 0);
                     const chat = Number(m.chatCount ?? 0);
                     const video = Number(m.videoCount ?? 0);
 
                     const totalReq = url + vis + chat + video;
-                    // ✅ ここで単価ロジックを共通化
                     const totalCostRow =
                       url * UNIT_PRICE.url +
                       vis * UNIT_PRICE.vision +
@@ -649,7 +676,6 @@ function formatDateYmd(value: string | null): string {
 }
 
 function getTrialStatus(user: UserProfile): TrialStatusView {
-  // 契約者なら常に「契約中」
   if (user.plan_status === 'paid') {
     return {
       kind: 'paid',
