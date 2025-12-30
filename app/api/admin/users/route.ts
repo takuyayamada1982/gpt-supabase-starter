@@ -2,88 +2,56 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 
-const supabase = createClient(
+// ✅ サーバー側専用の Supabase クライアント（Service Role Key）
+const supabaseAdmin = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// 今月の開始・終了
-function getCurrentMonthRange() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth(); // 0-11
+type UsageType = 'url' | 'vision' | 'chat';
 
-  const start = new Date(year, month, 1);
-  const end = new Date(year, month + 1, 1);
-
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-}
-
-type UsageType = 'url' | 'vision' | 'chat' | 'video';
-
-interface UserProfileRow {
-  id: string;
-  email: string | null;
-  account_id: string | null;
-  is_master: boolean | null;
-  registered_at: string | null;
-  deleted_at: string | null;
-  trial_type: string | null;   // 'normal' | 'referral' | null
-  plan_status: string | null;  // 'trial' | 'paid' | null
-  plan_tier: string | null;    // 'starter' | 'pro' | null
-}
-
-interface UsageLogRow {
+type UsageLogRow = {
   user_id: string;
   type: UsageType;
   cost: number | null;
-}
-
-// SSGさせない
-export const dynamic = 'force-dynamic';
+};
 
 export async function GET() {
   try {
-    const { start, end } = getCurrentMonthRange();
-
-    // 1) profiles 取得（アカウントIDはここ）
-    const { data: profiles, error: profilesErr } = await supabase
+    // 1) profiles 取得
+    const { data: profiles, error: profilesErr } = await supabaseAdmin
       .from('profiles')
       .select(
-        [
-          'id',
-          'email',
-          'account_id',
-          'is_master',
-          'registered_at',
-          'deleted_at',
-          'trial_type',
-          'plan_status',
-          'plan_tier',
-        ].join(', ')
+        `
+        id,
+        email,
+        account_id,
+        is_master,
+        registered_at,
+        deleted_at,
+        trial_type,
+        plan_status,
+        plan_tier
+      `
       )
-      .order('registered_at', { ascending: false });
+      .order('registered_at', { ascending: true });
 
     if (profilesErr) {
       console.error('profiles error:', profilesErr);
-      return NextResponse.json(
-        { error: 'profiles_error', message: 'プロフィールの取得に失敗しました。' },
-        { status: 500 }
-      );
+      return NextResponse.json({ users: [] }, { status: 200 });
     }
 
-    // ★ 型エラー対策：unknown を経由してキャスト
-    const profileRows: UserProfileRow[] = (profiles ?? []) as unknown as UserProfileRow[];
+    const safeProfiles = (profiles ?? []) as any[];
 
-    if (profileRows.length === 0) {
-      return NextResponse.json({ users: [] });
-    }
+    // 2) 今月の usage_logs を取得（Service Role で全ユーザー分）
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth(); // 0-11
 
-    // 2) usage_logs から今月分を取得して集計
-    const { data: logs, error: logsErr } = await supabase
+    const start = new Date(year, month, 1).toISOString();   // 月初 (UTC)
+    const end = new Date(year, month + 1, 1).toISOString(); // 翌月1日 (UTC)
+
+    const { data: logs, error: logsErr } = await supabaseAdmin
       .from('usage_logs')
       .select('user_id, type, cost')
       .gte('created_at', start)
@@ -91,88 +59,69 @@ export async function GET() {
 
     if (logsErr) {
       console.error('usage_logs error:', logsErr);
-      return NextResponse.json(
-        { error: 'usage_logs_error', message: '利用ログの取得に失敗しました。' },
-        { status: 500 }
-      );
-    }
-
-    const usageRows: UsageLogRow[] = (logs ?? []) as unknown as UsageLogRow[];
-
-    type UsageAgg = {
-      url: number;
-      vision: number;
-      chat: number;
-      video: number;
-      totalCost: number;
-    };
-
-    const usageByUser: Record<string, UsageAgg> = {};
-
-    for (const log of usageRows) {
-      const uid = log.user_id;
-      if (!uid) continue;
-
-      if (!usageByUser[uid]) {
-        usageByUser[uid] = {
-          url: 0,
-          vision: 0,
-          chat: 0,
-          video: 0,
-          totalCost: 0,
-        };
-      }
-
-      const agg = usageByUser[uid];
-
-      if (log.type === 'url') agg.url += 1;
-      else if (log.type === 'vision') agg.vision += 1;
-      else if (log.type === 'chat') agg.chat += 1;
-      else if (log.type === 'video') agg.video += 1;
-
-      const c = Number(log.cost ?? 0);
-      if (!Number.isNaN(c)) {
-        agg.totalCost += c;
-      }
-    }
-
-    // 3) profiles + 今月の利用集計をマージして返す
-    const users = profileRows.map((p) => {
-      const usage = usageByUser[p.id] ?? {
-        url: 0,
-        vision: 0,
-        chat: 0,
-        video: 0,
-        totalCost: 0,
-      };
-
-      return {
+      const users = safeProfiles.map((p) => ({
         id: p.id,
         email: p.email,
-        account_id: p.account_id, // ★ Supabase の profiles.account_id をそのまま使う
+        account_id: p.account_id,
         is_master: p.is_master,
         registered_at: p.registered_at,
         deleted_at: p.deleted_at,
         trial_type: p.trial_type,
         plan_status: p.plan_status,
         plan_tier: p.plan_tier,
-        monthly_url_count: usage.url,
-        monthly_vision_count: usage.vision,
-        monthly_chat_count: usage.chat,
-        monthly_video_count: usage.video,
-        monthly_total_cost: usage.totalCost,
+        monthly_url_count: 0,
+        monthly_vision_count: 0,
+        monthly_chat_count: 0,
+        monthly_total_cost: 0,
+      }));
+      return NextResponse.json({ users }, { status: 200 });
+    }
+
+    const usageLogs = (logs ?? []) as UsageLogRow[];
+
+    // 3) ユーザーごとに今月の利用回数・金額を集計
+    const grouped: Record<
+      string,
+      { url: number; vision: number; chat: number; cost: number }
+    > = {};
+
+    for (const log of usageLogs) {
+      if (!grouped[log.user_id]) {
+        grouped[log.user_id] = { url: 0, vision: 0, chat: 0, cost: 0 };
+      }
+
+      if (log.type === 'url') grouped[log.user_id].url += 1;
+      if (log.type === 'vision') grouped[log.user_id].vision += 1;
+      if (log.type === 'chat') grouped[log.user_id].chat += 1;
+
+      const c = typeof log.cost === 'number' ? log.cost : 0;
+      grouped[log.user_id].cost += c;
+    }
+
+    // 4) profiles + 今月分集計を合体させて返却
+    const users = safeProfiles.map((p) => {
+      const g = grouped[p.id] ?? { url: 0, vision: 0, chat: 0, cost: 0 };
+      return {
+        id: p.id,
+        email: p.email,
+        account_id: p.account_id,
+        is_master: p.is_master,
+        registered_at: p.registered_at,
+        deleted_at: p.deleted_at,
+        trial_type: p.trial_type,
+        plan_status: p.plan_status,
+        plan_tier: p.plan_tier,
+
+        monthly_url_count: g.url,
+        monthly_vision_count: g.vision,
+        monthly_chat_count: g.chat,
+        monthly_total_cost: g.cost,
       };
     });
 
-    return NextResponse.json({ users });
-  } catch (e: any) {
-    console.error('API /api/admin/users error', e);
-    return NextResponse.json(
-      {
-        error: 'internal_error',
-        message: e?.message ?? '予期せぬエラーが発生しました。',
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ users }, { status: 200 });
+  } catch (e) {
+    console.error('admin/users GET error:', e);
+    return NextResponse.json({ users: [] }, { status: 200 });
   }
 }
