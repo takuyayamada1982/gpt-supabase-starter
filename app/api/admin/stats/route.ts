@@ -1,11 +1,16 @@
 // app/api/admin/stats/route.ts
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabaseClient';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseAdmin = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 interface Summary {
-  month: string; // "2025-12"
+  month: string;
   totalRequests: number;
   totalCost: number;
   countsByType: Partial<Record<UsageType, number>>;
@@ -13,7 +18,7 @@ interface Summary {
 }
 
 interface MonthlyRow {
-  month: string; // "2025-12"
+  month: string;
   urlCount: number;
   visionCount: number;
   chatCount: number;
@@ -27,11 +32,11 @@ export async function GET() {
     const year = now.getFullYear();
     const month = now.getMonth(); // 0-11
 
-    // 👇 直近24ヶ月分（ログ取得期間）
-    const from = new Date(year, month - 23, 1); // 24ヶ月前の月初
-    const to = new Date(year, month + 1, 1);    // 翌月1日
+    // 直近24ヶ月ぶん
+    const from = new Date(year, month - 23, 1);
+    const to = new Date(year, month + 1, 1);
 
-    const { data: logs, error } = await supabase
+    const { data: logs, error } = await supabaseAdmin
       .from('usage_logs')
       .select('created_at, type, cost')
       .gte('created_at', from.toISOString())
@@ -62,13 +67,11 @@ export async function GET() {
       return `${y}-${m}`;
     };
 
-    // 月ごと集計用
     const monthlyMap = new Map<
       string,
       { url: number; vision: number; chat: number; video: number; cost: number }
     >();
 
-    // 今月 summary 用（種別別）
     const currentKey = getMonthKey(now);
     const currentCounts: Record<UsageType, number> = {
       url: 0,
@@ -109,7 +112,6 @@ export async function GET() {
 
       agg.cost += c;
 
-      // 👇 今月分なら summary 用にも反映
       if (key === currentKey) {
         if (type === 'url') {
           currentCounts.url += 1;
@@ -127,9 +129,9 @@ export async function GET() {
       }
     }
 
-    // 👇 24ヶ月分すべてを埋める（ログが無い月も 0 で返す）
+    // 🔽 最新月が上に来るように 2025-12, 2025-11, ... の順に並べる
     const months: string[] = [];
-    for (let i = 23; i >= 0; i -= 1) {
+    for (let i = 0; i < 24; i += 1) {
       const d = new Date(year, month - i, 1);
       months.push(getMonthKey(d));
     }
