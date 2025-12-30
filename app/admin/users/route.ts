@@ -1,9 +1,9 @@
 // app/api/admin/users/route.ts
 import { NextResponse } from 'next/server';
-// ★ supabase クライアントは、既に使っているものに合わせています
+// 既存プロジェクトに合わせているクライアント
 import { supabase } from '@/lib/supabaseClient';
 
-type UsageType = 'url' | 'vision' | 'chat';
+type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
 type UsageLogRow = {
   user_id: string;
@@ -27,7 +27,7 @@ export async function GET() {
         trial_type,
         plan_status,
         plan_tier
-      `
+      `,
       )
       .order('registered_at', { ascending: true });
 
@@ -43,7 +43,7 @@ export async function GET() {
     const year = now.getFullYear();
     const month = now.getMonth(); // 0-11
 
-    const start = new Date(year, month, 1).toISOString();   // 月初
+    const start = new Date(year, month, 1).toISOString(); // 月初
     const end = new Date(year, month + 1, 1).toISOString(); // 翌月1日
 
     const { data: logs, error: logsErr } = await supabase
@@ -68,6 +68,7 @@ export async function GET() {
         monthly_url_count: 0,
         monthly_vision_count: 0,
         monthly_chat_count: 0,
+        monthly_video_count: 0,
         monthly_total_cost: 0,
       }));
       return NextResponse.json({ users }, { status: 200 });
@@ -78,17 +79,24 @@ export async function GET() {
     // 3) ユーザーごとに今月の利用回数・金額を集計
     const grouped: Record<
       string,
-      { url: number; vision: number; chat: number; cost: number }
+      { url: number; vision: number; chat: number; video: number; cost: number }
     > = {};
 
     for (const log of usageLogs) {
       if (!grouped[log.user_id]) {
-        grouped[log.user_id] = { url: 0, vision: 0, chat: 0, cost: 0 };
+        grouped[log.user_id] = {
+          url: 0,
+          vision: 0,
+          chat: 0,
+          video: 0,
+          cost: 0,
+        };
       }
 
       if (log.type === 'url') grouped[log.user_id].url += 1;
       if (log.type === 'vision') grouped[log.user_id].vision += 1;
       if (log.type === 'chat') grouped[log.user_id].chat += 1;
+      if (log.type === 'video') grouped[log.user_id].video += 1;
 
       const c = typeof log.cost === 'number' ? log.cost : 0;
       grouped[log.user_id].cost += c;
@@ -96,7 +104,14 @@ export async function GET() {
 
     // 4) profiles + 今月分集計を合体させて返却
     const users = safeProfiles.map((p) => {
-      const g = grouped[p.id] ?? { url: 0, vision: 0, chat: 0, cost: 0 };
+      const g = grouped[p.id] ?? {
+        url: 0,
+        vision: 0,
+        chat: 0,
+        video: 0,
+        cost: 0,
+      };
+
       return {
         id: p.id,
         email: p.email,
@@ -106,12 +121,13 @@ export async function GET() {
         deleted_at: p.deleted_at,
         trial_type: p.trial_type,
         plan_status: p.plan_status,
-        plan_tier: p.plan_tier,          // ★ プラン種別（starter / pro / null）
+        plan_tier: p.plan_tier, // プラン種別（starter / pro / null）
 
         // AdminPage 側で使う「今月の利用内訳」
         monthly_url_count: g.url,
         monthly_vision_count: g.vision,
         monthly_chat_count: g.chat,
+        monthly_video_count: g.video,
         monthly_total_cost: g.cost,
       };
     });
