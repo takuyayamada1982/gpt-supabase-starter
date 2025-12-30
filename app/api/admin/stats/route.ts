@@ -23,14 +23,13 @@ interface MonthlyRow {
 
 export async function GET() {
   try {
-    // ① 期間：直近 24 ヶ月ぶんだけ見る
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth(); // 0-11
 
-    // 24 ヶ月前（だいたいで OK）
-    const from = new Date(year, month - 23, 1);
-    const to = new Date(year, month + 1, 1); // 来月 1 日
+    // 👇 直近24ヶ月分（ログ取得期間）
+    const from = new Date(year, month - 23, 1); // 24ヶ月前の月初
+    const to = new Date(year, month + 1, 1);    // 翌月1日
 
     const { data: logs, error } = await supabase
       .from('usage_logs')
@@ -48,7 +47,7 @@ export async function GET() {
             totalCost: 0,
             countsByType: {},
             costsByType: {},
-          } satisfies Summary,
+          } as Summary,
           monthly: [] as MonthlyRow[],
         },
         { status: 200 },
@@ -57,22 +56,31 @@ export async function GET() {
 
     const usageLogs = logs ?? [];
 
-    // ② 月ごとの集計用マップ
-    const monthlyMap = new Map<
-      string,
-      {
-        url: number;
-        vision: number;
-        chat: number;
-        video: number;
-        cost: number;
-      }
-    >();
-
     const getMonthKey = (d: Date) => {
       const y = d.getFullYear();
       const m = (d.getMonth() + 1).toString().padStart(2, '0');
       return `${y}-${m}`;
+    };
+
+    // 月ごと集計用
+    const monthlyMap = new Map<
+      string,
+      { url: number; vision: number; chat: number; video: number; cost: number }
+    >();
+
+    // 今月 summary 用（種別別）
+    const currentKey = getMonthKey(now);
+    const currentCounts: Record<UsageType, number> = {
+      url: 0,
+      vision: 0,
+      chat: 0,
+      video: 0,
+    };
+    const currentCosts: Record<UsageType, number> = {
+      url: 0,
+      vision: 0,
+      chat: 0,
+      video: 0,
     };
 
     for (const row of usageLogs as any[]) {
@@ -86,26 +94,55 @@ export async function GET() {
       const agg = monthlyMap.get(key)!;
 
       const type: string = row.type ?? '';
-      if (type === 'url') agg.url += 1;
-      else if (type === 'vision') agg.vision += 1;
-      else if (type === 'chat') agg.chat += 1;
-      else if (type === 'video') agg.video += 1;
-
-      const c =
+      const rawCost =
         typeof row.cost === 'number'
           ? row.cost
           : row.cost
           ? Number(row.cost)
           : 0;
-      if (!Number.isNaN(c)) {
-        agg.cost += c;
+      const c = Number.isNaN(rawCost) ? 0 : rawCost;
+
+      if (type === 'url') agg.url += 1;
+      else if (type === 'vision') agg.vision += 1;
+      else if (type === 'chat') agg.chat += 1;
+      else if (type === 'video') agg.video += 1;
+
+      agg.cost += c;
+
+      // 👇 今月分なら summary 用にも反映
+      if (key === currentKey) {
+        if (type === 'url') {
+          currentCounts.url += 1;
+          currentCosts.url += c;
+        } else if (type === 'vision') {
+          currentCounts.vision += 1;
+          currentCosts.vision += c;
+        } else if (type === 'chat') {
+          currentCounts.chat += 1;
+          currentCosts.chat += c;
+        } else if (type === 'video') {
+          currentCounts.video += 1;
+          currentCosts.video += c;
+        }
       }
     }
 
-    // ③ 月次一覧を作成（キーでソート）
-    const monthKeys = Array.from(monthlyMap.keys()).sort(); // 昇順
-    const monthly: MonthlyRow[] = monthKeys.map((key) => {
-      const agg = monthlyMap.get(key)!;
+    // 👇 24ヶ月分すべてを埋める（ログが無い月も 0 で返す）
+    const months: string[] = [];
+    for (let i = 23; i >= 0; i -= 1) {
+      const d = new Date(year, month - i, 1);
+      months.push(getMonthKey(d));
+    }
+
+    const monthly: MonthlyRow[] = months.map((key) => {
+      const agg =
+        monthlyMap.get(key) ?? {
+          url: 0,
+          vision: 0,
+          chat: 0,
+          video: 0,
+          cost: 0,
+        };
       return {
         month: key,
         urlCount: agg.url,
@@ -116,37 +153,24 @@ export async function GET() {
       };
     });
 
-    // ④ 今月分の summary を計算
-    const currentKey = getMonthKey(now);
-    const currentAgg =
-      monthlyMap.get(currentKey) ??
-      ({ url: 0, vision: 0, chat: 0, video: 0, cost: 0 } as const);
-
     const totalRequests =
-      currentAgg.url + currentAgg.vision + currentAgg.chat + currentAgg.video;
+      currentCounts.url +
+      currentCounts.vision +
+      currentCounts.chat +
+      currentCounts.video;
+    const totalCost =
+      currentCosts.url +
+      currentCosts.vision +
+      currentCosts.chat +
+      currentCosts.video;
 
     const summary: Summary = {
       month: currentKey,
       totalRequests,
-      totalCost: currentAgg.cost,
-      countsByType: {
-        url: currentAgg.url,
-        vision: currentAgg.vision,
-        chat: currentAgg.chat,
-        video: currentAgg.video,
-      },
-      costsByType: {
-        // 単価は既に usage_logs.cost に反映済みなので、そのまま合計値だけ持つ
-        url: 0, // 種別別の金額を分けたい場合は、上のループで type ごとに cost を分けて集計する
-        vision: 0,
-        chat: 0,
-        video: 0,
-      },
+      totalCost,
+      countsByType: currentCounts,
+      costsByType: currentCosts,
     };
-
-    // ★ costsByType も「ちゃんと種別ごとに見たい」場合は、
-    //    上のループを少し複雑にして type ごとの cost を分けて集計する実装に差し替えてください。
-    //    まずは「総額」と「リクエスト数」が正しく動くことを優先しています。
 
     return NextResponse.json(
       {
@@ -165,7 +189,7 @@ export async function GET() {
           totalCost: 0,
           countsByType: {},
           costsByType: {},
-        } satisfies Summary,
+        } as Summary,
         monthly: [] as MonthlyRow[],
       },
       { status: 200 },
