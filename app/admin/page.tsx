@@ -17,7 +17,8 @@ interface MonthlyRow {
   visionCount: number | null;
   chatCount: number | null;
   videoCount: number | null;
-  totalCost: number | null;
+  // 料金はフロント側で計算するので totalCost は使わない
+  totalCost?: number | null;
 }
 
 interface AdminStatsResponse {
@@ -61,6 +62,14 @@ interface TrialStatusView {
   bgColor: string;
   textColor: string;
 }
+
+// 単価定義（全画面で共通利用）
+const UNIT_PRICE: Record<UsageType, number> = {
+  url: 0.7,
+  vision: 1.0,
+  chat: 0.3,
+  video: 20.0,
+};
 
 export default function AdminPage() {
   const router = useRouter();
@@ -198,9 +207,8 @@ export default function AdminPage() {
   const monthly: MonthlyRow[] = stats.monthly ?? [];
   const monthLabel = stats.summary?.month ?? '—';
 
-  // ======== ユーザー一覧から今月の利用状況を集計 ========
+  // ======== ユーザー一覧から「今月」の利用状況を集計（グラフ・KPI用） ========
 
-  // 種別別の合計回数
   let totalUrl = 0;
   let totalVision = 0;
   let totalChat = 0;
@@ -220,15 +228,6 @@ export default function AdminPage() {
     video: totalVideo,
   };
 
-  // 単価定義
-  const UNIT_PRICE: Record<UsageType, number> = {
-    url: 0.7,
-    vision: 1.0,
-    chat: 0.3,
-    video: 20.0,
-  };
-
-  // 種別別の合計金額
   const costs: Record<UsageType, number> = {
     url: counts.url * UNIT_PRICE.url,
     vision: counts.vision * UNIT_PRICE.vision,
@@ -338,7 +337,7 @@ export default function AdminPage() {
           padding: '24px 16px 32px',
         }}
       >
-        {/* KPIカード：上段は「全体のユーザー数」系、下段は利用状況系 */}
+        {/* KPIカード */}
         <div
           style={{
             display: 'grid',
@@ -474,7 +473,7 @@ export default function AdminPage() {
           </Card>
         </div>
 
-        {/* 月次一覧テーブル */}
+        {/* 月次一覧テーブル（フロントで料金再計算） */}
         <div style={{ marginTop: 24 }}>
           <Card title="月次の利用・料金一覧（最大24ヶ月）">
             <div
@@ -507,7 +506,14 @@ export default function AdminPage() {
                     const vis = Number(m.visionCount ?? 0);
                     const chat = Number(m.chatCount ?? 0);
                     const video = Number(m.videoCount ?? 0);
-                    const totalCostRow = Number(m.totalCost ?? 0);
+
+                    const totalReq = url + vis + chat + video;
+                    // ✅ ここで単価ロジックを共通化
+                    const totalCostRow =
+                      url * UNIT_PRICE.url +
+                      vis * UNIT_PRICE.vision +
+                      chat * UNIT_PRICE.chat +
+                      video * UNIT_PRICE.video;
 
                     return (
                       <tr
@@ -519,9 +525,7 @@ export default function AdminPage() {
                         <Td align="right">{vis.toLocaleString()}</Td>
                         <Td align="right">{chat.toLocaleString()}</Td>
                         <Td align="right">{video.toLocaleString()}</Td>
-                        <Td align="right">
-                          {(url + vis + chat + video).toLocaleString()}
-                        </Td>
+                        <Td align="right">{totalReq.toLocaleString()}</Td>
                         <Td align="right">{formatYen(totalCostRow)}</Td>
                       </tr>
                     );
