@@ -5,20 +5,10 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-// ※ バックエンド側の type が "video_thumb" になっている想定
-type UsageType = 'url' | 'vision' | 'chat' | 'video_thumb';
+type UsageType = 'url' | 'vision' | 'chat' | 'video';
 
-interface Summary {
+interface SummaryFromApi {
   month: string; // "2025-12" など
-  totalRequests: number;
-  totalCost: number;
-  countsByType: Partial<Record<UsageType, number>> & {
-    // 古い "video" キーで来ても対応できるようにしておく
-    video?: number;
-  };
-  costsByType: Partial<Record<UsageType, number>> & {
-    video?: number;
-  };
 }
 
 interface MonthlyRow {
@@ -31,7 +21,7 @@ interface MonthlyRow {
 }
 
 interface AdminStatsResponse {
-  summary?: Summary;
+  summary?: SummaryFromApi;
   monthly?: MonthlyRow[];
 }
 
@@ -185,7 +175,7 @@ export default function AdminPage() {
     );
   }
 
-  // ローディング or API失敗 or stats が取れていない
+  // ローディング or stats が取れていない
   if (loading || !stats) {
     return (
       <FullScreenCenter>
@@ -203,59 +193,68 @@ export default function AdminPage() {
     );
   }
 
-  // ======== summary / monthly を組み立て ========
-
-  const summary: Summary =
-    stats.summary ?? {
-      month: '—',
-      totalRequests: 0,
-      totalCost: 0,
-      countsByType: {},
-      costsByType: {},
-    };
+  // ======== 月次テーブル用データ ========
 
   const monthly: MonthlyRow[] = stats.monthly ?? [];
+  const monthLabel = stats.summary?.month ?? '—';
 
-  const countsRaw = summary.countsByType ?? {};
-  const costsRaw = summary.costsByType ?? {};
+  // ======== ユーザー一覧から今月の利用状況を集計 ========
 
-  // バックエンド側が "video_thumb" でも "video" でも両方拾えるようにしておく
+  // 種別別の合計回数
+  let totalUrl = 0;
+  let totalVision = 0;
+  let totalChat = 0;
+  let totalVideo = 0;
+
+  users.forEach((u) => {
+    totalUrl += Number(u.monthly_url_count ?? 0);
+    totalVision += Number(u.monthly_vision_count ?? 0);
+    totalChat += Number(u.monthly_chat_count ?? 0);
+    totalVideo += Number(u.monthly_video_count ?? 0);
+  });
+
   const counts: Record<UsageType, number> = {
-    url: countsRaw.url ?? 0,
-    vision: countsRaw.vision ?? 0,
-    chat: countsRaw.chat ?? 0,
-    video_thumb:
-      countsRaw.video_thumb ??
-      (countsRaw as any).video ?? // 旧キーの保険
-      0,
+    url: totalUrl,
+    vision: totalVision,
+    chat: totalChat,
+    video: totalVideo,
   };
 
-  const costs: Record<UsageType, number> = {
-    url: costsRaw.url ?? 0,
-    vision: costsRaw.vision ?? 0,
-    chat: costsRaw.chat ?? 0,
-    video_thumb:
-      costsRaw.video_thumb ??
-      (costsRaw as any).video ?? // 旧キーの保険
-      0,
+  // 単価定義
+  const UNIT_PRICE: Record<UsageType, number> = {
+    url: 0.7,
+    vision: 1.0,
+    chat: 0.3,
+    video: 20.0,
   };
+
+  // 種別別の合計金額
+  const costs: Record<UsageType, number> = {
+    url: counts.url * UNIT_PRICE.url,
+    vision: counts.vision * UNIT_PRICE.vision,
+    chat: counts.chat * UNIT_PRICE.chat,
+    video: counts.video * UNIT_PRICE.video,
+  };
+
+  const totalRequests =
+    counts.url + counts.vision + counts.chat + counts.video;
+  const totalCost =
+    costs.url + costs.vision + costs.chat + costs.video;
 
   const maxCount = Math.max(
     counts.url,
     counts.vision,
     counts.chat,
-    counts.video_thumb,
+    counts.video,
     1,
   );
   const maxCost = Math.max(
     costs.url,
     costs.vision,
     costs.chat,
-    costs.video_thumb,
+    costs.video,
     1,
   );
-
-  const monthLabel = summary.month || '—';
 
   const formatYen = (v: number) => `¥${v.toFixed(1)}`;
 
@@ -263,10 +262,10 @@ export default function AdminPage() {
     url: 'URL要約',
     vision: '画像→SNS',
     chat: 'Chat',
-    video_thumb: '動画→文字',
+    video: '動画→文字',
   };
 
-  const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video_thumb'];
+  const typeOrder: UsageType[] = ['url', 'vision', 'chat', 'video'];
 
   // ======== ユーザー系 KPI（全体のユーザー数） ========
 
@@ -366,11 +365,11 @@ export default function AdminPage() {
           />
           <KpiCard
             title="今月の総リクエスト"
-            value={summary.totalRequests.toLocaleString()}
+            value={totalRequests.toLocaleString()}
           />
           <KpiCard
             title="今月の推定料金"
-            value={formatYen(summary.totalCost)}
+            value={formatYen(totalCost)}
           />
         </div>
 
@@ -508,7 +507,7 @@ export default function AdminPage() {
                     const vis = Number(m.visionCount ?? 0);
                     const chat = Number(m.chatCount ?? 0);
                     const video = Number(m.videoCount ?? 0);
-                    const totalCost = Number(m.totalCost ?? 0);
+                    const totalCostRow = Number(m.totalCost ?? 0);
 
                     return (
                       <tr
@@ -523,7 +522,7 @@ export default function AdminPage() {
                         <Td align="right">
                           {(url + vis + chat + video).toLocaleString()}
                         </Td>
-                        <Td align="right">{formatYen(totalCost)}</Td>
+                        <Td align="right">{formatYen(totalCostRow)}</Td>
                       </tr>
                     );
                   })}
