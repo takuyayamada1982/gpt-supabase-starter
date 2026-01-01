@@ -10,6 +10,14 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
+// ----------------------------------------------------
+// Supabase 認証クッキーまわり
+// ----------------------------------------------------
+
+type GetUserResult =
+  | { user: null; error: 'no_token' | 'auth_error' }
+  | { user: any; error: null };
+
 /**
  * Supabase の auth cookie 名を推測する
  * 例: NEXT_PUBLIC_SUPABASE_URL = https://abc123.supabase.co
@@ -32,7 +40,7 @@ function getSupabaseAuthCookieName(): string | null {
  * Cookie から access_token を取り出してユーザーを取得
  * sb-<projectRef>-auth-token 形式と sb-access-token の両方をサポート
  */
-async function getUserFromCookies() {
+async function getUserFromCookies(): Promise<GetUserResult> {
   const cookieStore = cookies();
 
   let accessToken: string | null = null;
@@ -48,7 +56,7 @@ async function getUserFromCookies() {
           accessToken = parsed.access_token;
         }
       } catch {
-        // JSON でなければ無視して後続へ
+        // JSON でなければ無視
       }
     }
   }
@@ -59,21 +67,25 @@ async function getUserFromCookies() {
   }
 
   if (!accessToken) {
-    return { user: null, error: 'no_token' as const };
+    return { user: null, error: 'no_token' };
   }
 
   const { data, error } = await adminSupabase.auth.getUser(accessToken);
 
   if (error || !data.user) {
-    return { user: null, error: 'auth_error' as const };
+    return { user: null, error: 'auth_error' };
   }
 
-  return { user: data.user, error: null as const };
+  return { user: data.user, error: null };
 }
+
+// ----------------------------------------------------
+// メインハンドラ
+// ----------------------------------------------------
 
 export async function POST(req: NextRequest) {
   try {
-    // ① Cookie からユーザー取得（上の getUserFromCookies を使用）
+    // ① Cookie からユーザー取得
     const { user, error: userError } = await getUserFromCookies();
 
     if (userError || !user) {
@@ -147,7 +159,7 @@ export async function POST(req: NextRequest) {
         ? '第三者が他人の記事を紹介する目線'
         : '中立的な第三者目線';
 
-    // ⑤ OpenAI へのプロンプト（input は string 1本）
+    // ⑤ OpenAI へのプロンプト
     const prompt = `
 あなたはSNSマーケティング担当者です。
 以下のWebページ本文を読み、次のフォーマットで日本語のSNS投稿用テキストを作成してください。
@@ -186,7 +198,7 @@ ${text}
       input: prompt,
     });
 
-    // ★ 型エラーを避けつつテキストを取得（responses API の出力形式に依存）
+    // OpenAI レスポンスからテキストを取り出し
     const outputItem = (response as any).output?.[0] as any;
     const raw: string = outputItem?.content?.[0]?.text ?? '';
 
