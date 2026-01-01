@@ -1,101 +1,139 @@
-// app/api/url/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import OpenAI from 'openai';
+// app/api/_shared/planGuard.ts
+import { Database } from '@/types/supabase';
+import { supabase } from './profile';
 
-import { supabase } from '../_shared/profile';      // ここは実際のパスに合わせて
-import { checkPlanGuardByUserId } from '../_shared/planGuard';
+// profiles テーブル 1行分の型
+type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!,
-});
-
-export async function POST(req: NextRequest) {
-  try {
-    // ① Cookie からログインユーザー取得
-    const access_token = cookies().get('sb-access-token')?.value;
-
-    if (!access_token) {
-      return NextResponse.json(
-        { error: 'not_auth', message: 'ログイン情報が見つかりません。' },
-        { status: 401 }
-      );
+export type PlanGuardResult =
+  | {
+      allowed: true;
+      reason: null;
+      profile: ProfileRow;
+      isTrial: boolean;
+      daysLeft: number | 0;
     }
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser(access_token);
-
-    if (userError || !user) {
-      return NextResponse.json(
-        { error: 'not_auth', message: 'ログイン情報が無効です。' },
-        { status: 401 }
-      );
-    }
-
-    // ② プランガード（トライアル/有料チェック）
-    const guard = await checkPlanGuardByUserId(user.id);
-
-    if (!guard.allowed) {
-      if (guard.reason === 'trial_expired') {
-        return NextResponse.json(
-          {
-            error: 'TRIAL_EXPIRED',
-            message:
-              '無料トライアルは終了しました。マイページからプランをご購入ください。',
-          },
-          { status: 403 }
-        );
-      }
-
-      // profile_not_found / not_logged_in など
-      return NextResponse.json(
-        { error: guard.reason ?? 'forbidden', message: '利用権限がありません。' },
-        { status: 403 }
-      );
-    }
-
-    // ③ ここから先が「今まで通りの URL 要約処理」
-    const body = (await req.json()) as {
-      url: string;
-      tone?: string;
-      // 他にあれば追加
+  | {
+      allowed: false;
+      reason: 'not_logged_in' | 'profile_not_found' | 'trial_expired';
+      profile?: ProfileRow;
+      isTrial?: boolean;
+      daysLeft?: number | 0;
     };
 
-    const { url, tone } = body;
+// トライアル終了日と残日数を計算
+function calcTrialInfo(profile: ProfileRow) {
+  const registeredAt = profile.registered_at
+    ? new Date(profile.registered_at)
+    : null;
 
-    if (!url) {
-      return NextResponse.json(
-        { error: 'bad_request', message: 'URLが指定されていません。' },
-        { status: 400 }
-      );
+  if (!registeredAt) {
+    return {
+      isTrial: false,
+      trialEnd: null as Date | null,
+      daysLeft: 0,
+    };
+  }
+
+  const trialType = profile.trial_type === 'referral' ? 'referral' : 'normal';
+  const trialDays = trialType === 'referral' ? 30 : 7;
+
+  const trialEnd = new Date(registeredAt);
+  trialEnd.setDate(trialEnd.getDate() + trialDays);
+
+  const now = new Date();
+  const diffMs = trialEnd.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  return {
+    isTrial: true,
+    trialEnd,
+    daysLeft: diffDays,
+  };
+}
+
+// メインのガード関数（ここだけ export）
+export async function checkPlanGuardByUserId(
+  userId?: string | null,
+): Promise<PlanGuardResult> {
+  if (!userId) {
+    return {
+      allowed: false,
+      reason: 'not_logged_in',
+    };
+  }
+
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .is('deleted_at', null)
+    .single();
+
+  if (error || !profile) {
+    return {
+      allowed: false,
+      reason: 'profile_not_found',
+    };
+  }
+
+  // 1. 有料プラン中なら OK（必要なら plan_valid_until も見る）
+  if (profile.plan_status === 'paid') {
+    if (profile.plan_valid_until) {
+      const now = new Date();
+      const validUntil = new Date(profile.plan_valid_until);
+      if (validUntil.getTime() < now.getTime()) {
+        // 有料期限切れ
+        return {
+          allowed: false,
+          reason: 'trial_expired',
+          profile,
+          isTrial: false,
+          daysLeft: 0,
+        };
+      }
     }
 
-    // --- ここに既存の OpenAI 呼び出しロジックをそのまま貼り直す ---
-    // 例）
-    // const summary = await openai.responses.create({ ... });
-    // await supabase.from('usage_logs').insert({
-    //   user_id: guard.profile.id,
-    //   type: 'url',
-    //   model: 'gpt-4.1-mini',
-    //   ...token情報 / cost など
-    // });
-
-    return NextResponse.json(
-      {
-        // summary: ...,
-      },
-      { status: 200 }
-    );
-  } catch (e) {
-    console.error('API /api/url error:', e);
-    return NextResponse.json(
-      {
-        error: 'INTERNAL_SERVER_ERROR',
-        message: 'サーバーエラーが発生しました。',
-      },
-      { status: 500 }
-    );
+    return {
+      allowed: true,
+      reason: null,
+      profile,
+      isTrial: false,
+      daysLeft: 0,
+    };
   }
+
+  // 2. トライアル情報から判定
+  const { isTrial, trialEnd, daysLeft } = calcTrialInfo(profile);
+
+  if (!isTrial || !trialEnd) {
+    // registered_at 無しなど → 期限切れ扱い
+    return {
+      allowed: false,
+      reason: 'trial_expired',
+      profile,
+      isTrial: false,
+      daysLeft: 0,
+    };
+  }
+
+  // daysLeft >= 0 なら当日までOK、マイナスなら終了
+  if (daysLeft >= 0) {
+    return {
+      allowed: true,
+      reason: null,
+      profile,
+      isTrial: true,
+      daysLeft,
+    };
+  }
+
+  // トライアル終了
+  return {
+    allowed: false,
+    reason: 'trial_expired',
+    profile,
+    isTrial: true,
+    daysLeft,
+  };
 }
