@@ -1,9 +1,16 @@
 // app/api/_shared/planGuard.ts
-import { Database } from '@/types/supabase';
+// ※ Database の import は削除しました
 import { supabase } from './profile';
 
-// profiles テーブル 1行分の型
-type ProfileRow = Database['public']['Tables']['profiles']['Row'];
+// profiles テーブル 1行分の型（最低限使う項目だけ定義）
+type ProfileRow = {
+  id: string;
+  plan_status: 'trial' | 'paid' | null;
+  plan_valid_until: string | null;
+  registered_at: string | null;
+  trial_type: 'normal' | 'referral' | null;
+  deleted_at: string | null;
+};
 
 export type PlanGuardResult =
   | {
@@ -52,7 +59,7 @@ function calcTrialInfo(profile: ProfileRow) {
   };
 }
 
-// メインのガード関数（ここだけ export）
+// メインのガード関数
 export async function checkPlanGuardByUserId(
   userId?: string | null,
 ): Promise<PlanGuardResult> {
@@ -77,7 +84,7 @@ export async function checkPlanGuardByUserId(
     };
   }
 
-  // 1. 有料プラン中なら OK（必要なら plan_valid_until も見る）
+  // 1. 有料プラン中なら OK
   if (profile.plan_status === 'paid') {
     if (profile.plan_valid_until) {
       const now = new Date();
