@@ -1,5 +1,59 @@
 // app/api/url/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
+import { createClient } from '@supabase/supabase-js';
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
+
+async function checkPlanGuard(req: NextRequest) {
+  const access_token = cookies().get('sb-access-token')?.value;
+
+  if (!access_token) {
+    return NextResponse.json({ error: 'not_auth' }, { status: 401 });
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser(access_token);
+
+  if (!user) {
+    return NextResponse.json({ error: 'not_auth' }, { status: 401 });
+  }
+
+  // profilesを取得
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('plan_status, trial_ends_at')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (!profile) {
+    return NextResponse.json({ error: 'profile_not_found' }, { status: 403 });
+  }
+
+  const now = new Date();
+  const trialEnd = profile.trial_ends_at
+    ? new Date(profile.trial_ends_at)
+    : null;
+
+  // ここが重要！
+  const isPaid = profile.plan_status === 'paid';
+  const isTrialActive = trialEnd && trialEnd > now;
+
+  if (!isPaid && !isTrialActive) {
+    return NextResponse.json(
+      { error: 'trial_expired' },
+      { status: 403 }
+    );
+  }
+
+  return null; // 通過OK
+}
+
+import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 
