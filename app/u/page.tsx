@@ -568,6 +568,7 @@ export default function UPage() {
         }),
       });
 
+      // 3リクエストを並列で叩く
       const [r1, r2, r3] = await Promise.all([
         fetch('/api/vision', payload(pInsta)),
         fetch('/api/vision', payload(pFb)),
@@ -576,11 +577,45 @@ export default function UPage() {
 
       const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
 
-      if (j1?.error || j2?.error || j3?.error) {
-        throw new Error(
-          j1?.error || j2?.error || j3?.error || '生成に失敗しました',
-        );
+      // ---------- ここからエラーハンドリングを強化 ----------
+      // 最初に検出したエラーの message / error を取り出すヘルパー
+      const pickError = () => {
+        const pairs: { res: Response; body: any }[] = [
+          { res: r1, body: j1 },
+          { res: r2, body: j2 },
+          { res: r3, body: j3 },
+        ];
+
+        for (const { res, body } of pairs) {
+          if (!res.ok) {
+            return {
+              code: body?.error,
+              message: body?.message || body?.error,
+            };
+          }
+          if (body?.error) {
+            return {
+              code: body.error,
+              message: body?.message || body.error,
+            };
+          }
+        }
+        return null;
+      };
+
+      const err = pickError();
+      if (err) {
+        // 共通の TRIAL_EXPIRED メッセージ
+        if (err.code === 'TRIAL_EXPIRED') {
+          alert(
+            '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          );
+        } else {
+          alert(`エラー: ${err.message || '生成に失敗しました'}`);
+        }
+        return; // ここで処理終了
       }
+      // ---------- エラーハンドリングここまで ----------
 
       setInstaText(j1.text || '');
       setFbText(j2.text || '');
@@ -594,6 +629,7 @@ export default function UPage() {
       setIsGenerating(false);
     }
   };
+
 
   // ===== 画像 → SNS =====
   const generateFromImage = async () => {
