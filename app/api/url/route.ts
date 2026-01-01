@@ -13,7 +13,7 @@ const openai = new OpenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    // ① 認証クライアント（Cookie ベース）
+    // ① Cookie ベースの supabase クライアント
     const supabase = createRouteHandlerClient({ cookies });
 
     const {
@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ③ リクエストボディ取得
+    // ③ リクエストボディ
     const body = (await req.json()) as {
       url: string;
       tone?: string;
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ④ 対象URLの本文を取得
+    // ④ URL 先の本文を取得
     const res = await fetch(url);
     if (!res.ok) {
       return NextResponse.json(
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 8000); // トークン削減のため先頭だけ
+      .slice(0, 8000); // トークン削減
 
     const toneText =
       tone === 'self'
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
         ? '第三者が他人の記事を紹介する目線'
         : '中立的な第三者目線';
 
-    // ⑤ OpenAI で SNS 向け文章を生成（input はシンプルに string 1本）
+    // ⑤ OpenAI へのプロンプト（input は string 1本）
     const prompt = `
 あなたはSNSマーケティング担当者です。
 以下のWebページ本文を読み、次のフォーマットで日本語のSNS投稿用テキストを作成してください。
@@ -131,10 +131,9 @@ ${text}
       input: prompt,
     });
 
-    const raw =
-      response.output[0]?.content[0]?.type === 'output_text'
-        ? response.output[0].content[0].text
-        : '';
+    // ★型エラー回避のため any キャストで素直にテキストを取得
+    const outputItem = (response as any).output?.[0] as any;
+    const raw: string = outputItem?.content?.[0]?.text ?? '';
 
     let parsed: any;
     try {
@@ -147,12 +146,12 @@ ${text}
       );
     }
 
-    // ⑥ usage_logs へ記録（コスト計算は仮）
+    // ⑥ usage_logs へ記録
     const totalTokens =
       (response.usage?.input_tokens ?? 0) +
       (response.usage?.output_tokens ?? 0);
 
-    const cost = totalTokens * 0.002; // ← 実際の原価に合わせて後で調整
+    const cost = totalTokens * 0.002; // 原価はあとで調整
 
     await adminSupabase.from('usage_logs').insert({
       user_id: guard.profile.id,
