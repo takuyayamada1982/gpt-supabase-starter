@@ -13,7 +13,7 @@ const openai = new OpenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    // ① Supabase（認証用）クライアントを Cookie ベースで作成
+    // ① 認証クライアント（Cookie ベース）
     const supabase = createRouteHandlerClient({ cookies });
 
     const {
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ④ 対象URLの本文を取得（簡易版：HTMLをテキスト化）
+    // ④ 対象URLの本文を取得
     const res = await fetch(url);
     if (!res.ok) {
       return NextResponse.json(
@@ -78,16 +78,12 @@ export async function POST(req: NextRequest) {
 
     const html = await res.text();
     const text = html
-      // script / style を除去
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '')
-      // タグ除去
       .replace(/<[^>]+>/g, ' ')
-      // 空白整理
       .replace(/\s+/g, ' ')
       .trim()
-      // トークン数を抑えるために先頭だけ使う
-      .slice(0, 8000);
+      .slice(0, 8000); // トークン削減のため先頭だけ
 
     const toneText =
       tone === 'self'
@@ -96,16 +92,8 @@ export async function POST(req: NextRequest) {
         ? '第三者が他人の記事を紹介する目線'
         : '中立的な第三者目線';
 
-    // ⑤ OpenAI でSNS向け文章を生成
-    const response = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `
+    // ⑤ OpenAI で SNS 向け文章を生成（input はシンプルに string 1本）
+    const prompt = `
 あなたはSNSマーケティング担当者です。
 以下のWebページ本文を読み、次のフォーマットで日本語のSNS投稿用テキストを作成してください。
 
@@ -117,7 +105,7 @@ export async function POST(req: NextRequest) {
 - posts.facebook: Facebook向けの投稿文案を3パターン（ビジネス寄りでもOK）
 - posts.x: X(旧Twitter)向けの投稿文案を3パターン（140文字前後）
 
-出力は必ず **JSONのみ** で、以下の型に完全に従ってください：
+出力は必ず JSON のみで、以下の型に完全に従ってください：
 
 {
   "summary": string,
@@ -131,16 +119,16 @@ export async function POST(req: NextRequest) {
   }
 }
 
-口調や視点は "${toneText}" を想定してください。
-`,
-            },
-            {
-              type: 'input_text',
-              text,
-            },
-          ],
-        },
-      ],
+口調や視点は「${toneText}」を想定してください。
+
+===== ここから本文 =====
+${text}
+===== 本文ここまで =====
+`.trim();
+
+    const response = await openai.responses.create({
+      model: 'gpt-4.1-mini',
+      input: prompt,
     });
 
     const raw =
@@ -154,20 +142,17 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       console.error('Failed to parse OpenAI JSON:', e, raw);
       return NextResponse.json(
-        {
-          error: 'parse_error',
-          message: 'AIレスポンスの解析に失敗しました。',
-        },
+        { error: 'parse_error', message: 'AIレスポンスの解析に失敗しました。' },
         { status: 500 }
       );
     }
 
-    // ⑥ usage_logs へ記録（コスト計算は仮ロジック。必要に応じて調整してください）
+    // ⑥ usage_logs へ記録（コスト計算は仮）
     const totalTokens =
       (response.usage?.input_tokens ?? 0) +
       (response.usage?.output_tokens ?? 0);
 
-    const cost = totalTokens * 0.002; // ← 仮の原価計算。あなたの料金表に合わせて修正してください
+    const cost = totalTokens * 0.002; // ← 実際の原価に合わせて後で調整
 
     await adminSupabase.from('usage_logs').insert({
       user_id: guard.profile.id,
