@@ -1,7 +1,10 @@
 // app/api/url/route.ts
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import OpenAI from 'openai';
-import { supabase } from '../_shared/profile';
+import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+
+import { supabase as adminSupabase } from '../_shared/profile';
 import { checkPlanGuardByUserId } from '../_shared/planGuard';
 
 const openai = new OpenAI({
@@ -10,38 +13,22 @@ const openai = new OpenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    //
-    // ① Authorization ヘッダーからアクセストークン取得
-    //
-    const auth = req.headers.get('authorization');
+    // ① Cookie ベースの supabase クライアント
+    const supabase = createRouteHandlerClient({ cookies });
 
-    if (!auth || !auth.startsWith('Bearer ')) {
-      return NextResponse.json(
-        { error: 'not_auth', message: '認証情報がありません。' },
-        { status: 401 }
-      );
-    }
-
-    const accessToken = auth.replace('Bearer ', '');
-
-    //
-    // ② Supabase でユーザー確認
-    //
     const {
       data: { user },
       error: userError,
-    } = await supabase.auth.getUser(accessToken);
+    } = await supabase.auth.getUser();
 
     if (userError || !user) {
       return NextResponse.json(
-        { error: 'not_auth', message: 'ログインが確認できません。' },
+        { error: 'not_auth', message: 'ログイン情報が見つかりません。' },
         { status: 401 }
       );
     }
 
-    //
-    // ③ プランガード（トライアル or 有料チェック）
-    //
+    // ② プランガード（トライアル / 有料チェック）
     const guard = await checkPlanGuardByUserId(user.id);
 
     if (!guard.allowed) {
@@ -57,20 +44,21 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json(
-        { error: guard.reason ?? 'forbidden', message: '利用権限がありません。' },
+        {
+          error: guard.reason ?? 'forbidden',
+          message: '利用権限がありません。',
+        },
         { status: 403 }
       );
     }
 
-    //
-    // ④ リクエストボディ取得
-    //
+    // ③ リクエストボディ
     const body = (await req.json()) as {
       url: string;
       tone?: string;
     };
 
-    const { url } = body;
+    const { url, tone } = body;
 
     if (!url) {
       return NextResponse.json(
@@ -79,60 +67,104 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    //
-    // ⑤ OpenAI で要約生成
-    //
-    const response = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      input: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'input_text',
-              text: `
-あなたは SNS運用のプロ編集者です。
-以下のURLの内容を確認して、
-・200〜300文字の要約
-・30文字以内のタイトルを3つ
-・おすすめハッシュタグ10個
-を日本語で出力してください。
-
-URL: ${url}
-              `.trim(),
-            },
-          ],
-        },
-      ],
-    });
-
-    // ★ 型安全に output からテキストを取り出す
-    let raw = '';
-
-    const firstItem = response.output[0];
-    if (firstItem && firstItem.type === 'message') {
-      const firstContent = firstItem.content[0];
-      if (firstContent && firstContent.type === 'output_text') {
-        raw = firstContent.text;
-      }
+    // ④ URL 先の本文を取得
+    const res = await fetch(url);
+    if (!res.ok) {
+      return NextResponse.json(
+        { error: 'fetch_failed', message: 'URLの取得に失敗しました。' },
+        { status: 400 }
+      );
     }
 
-    //
-    // ⑥ usage_logs に記録
-    //
-    await supabase.from('usage_logs').insert({
-      user_id: user.id,
-      type: 'url',
+    const html = await res.text();
+    const text = html
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 8000); // トークン削減
+
+    const toneText =
+      tone === 'self'
+        ? '投稿者本人の目線'
+        : tone === 'other'
+        ? '第三者が他人の記事を紹介する目線'
+        : '中立的な第三者目線';
+
+    // ⑤ OpenAI へのプロンプト（input は string 1本）
+    const prompt = `
+あなたはSNSマーケティング担当者です。
+以下のWebページ本文を読み、次のフォーマットで日本語のSNS投稿用テキストを作成してください。
+
+- summary: 200〜300文字の要約
+- summary_copy: summaryを元にした「コピペ用の要約文」
+- titleIdeas: 投稿タイトル案を3つ（スッキリした短めのタイトル）
+- hashtags: ハッシュタグ候補を10〜15個（日本語と英語を混ぜても良い）
+- posts.instagram: Instagram向けの投稿文案を3パターン（改行込み）
+- posts.facebook: Facebook向けの投稿文案を3パターン（ビジネス寄りでもOK）
+- posts.x: X(旧Twitter)向けの投稿文案を3パターン（140文字前後）
+
+出力は必ず JSON のみで、以下の型に完全に従ってください：
+
+{
+  "summary": string,
+  "summary_copy": string,
+  "titleIdeas": string[],
+  "hashtags": string[],
+  "posts": {
+    "instagram": string[],
+    "facebook": string[],
+    "x": string[]
+  }
+}
+
+口調や視点は「${toneText}」を想定してください。
+
+===== ここから本文 =====
+${text}
+===== 本文ここまで =====
+`.trim();
+
+    const response = await openai.responses.create({
       model: 'gpt-4.1-mini',
-      // token/cost を付けたい場合はここに追加
+      input: prompt,
     });
 
-    return NextResponse.json(
-      {
-        result: raw,
-      },
-      { status: 200 }
-    );
+    // ★ 型エラーを避けつつテキストを取得（responses API の出力形式に依存）
+    const outputItem = (response as any).output?.[0] as any;
+    const raw: string = outputItem?.content?.[0]?.text ?? '';
+
+    let parsed: any;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.error('Failed to parse OpenAI JSON:', e, raw);
+      return NextResponse.json(
+        { error: 'parse_error', message: 'AIレスポンスの解析に失敗しました。' },
+        { status: 500 }
+      );
+    }
+
+    // ⑥ usage_logs へ記録
+    const totalTokens =
+      (response.usage?.input_tokens ?? 0) +
+      (response.usage?.output_tokens ?? 0);
+
+    const cost = totalTokens * 0.002; // 原価はあとで調整
+
+    await adminSupabase.from('usage_logs').insert({
+      user_id: guard.profile.id,
+      type: 'url',
+      model: 'gpt-4.1-mini',
+      prompt_tokens: response.usage?.input_tokens ?? 0,
+      completion_tokens: response.usage?.output_tokens ?? 0,
+      total_tokens: totalTokens,
+      cost,
+    });
+
+    // ⑦ フロントへ返却
+    return NextResponse.json(parsed, { status: 200 });
   } catch (e) {
     console.error('API /api/url error:', e);
     return NextResponse.json(
