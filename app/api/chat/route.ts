@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+import { checkPlanGuardByUserId } from '../_shared/planGuard'; // ★追加
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -16,9 +17,36 @@ export async function POST(req: NextRequest) {
   try {
     const { userId, userText } = await req.json();
 
+    // 1) userId 必須チェック
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
+
+    // 2) プランガード（URL と同じロジック）
+    const guard = await checkPlanGuardByUserId(userId);
+
+    if (!guard.allowed) {
+      if (guard.reason === 'trial_expired') {
+        return NextResponse.json(
+          {
+            error: 'TRIAL_EXPIRED',
+            message:
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          },
+          { status: 403 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: guard.reason ?? 'forbidden',
+          message: '利用権限がありません。',
+        },
+        { status: 403 }
+      );
+    }
+
+    // 3) テキスト必須チェック
     if (!userText) {
       return NextResponse.json(
         { error: 'userText required' },
@@ -51,11 +79,11 @@ export async function POST(req: NextRequest) {
       await supabase.from('usage_logs').insert({
         user_id: userId,
         model: (ai as any).model ?? 'gpt-4.1-mini',
-        type: 'chat',                             // ★ここ重要
+        type: 'chat', // ★ここ重要
         prompt_tokens: usage.prompt_tokens ?? 0,
         completion_tokens: usage.completion_tokens ?? 0,
         total_tokens: totalTokens,
-        cost,                                     // ★ここも重要
+        cost, // ★ここも重要
       });
     }
 
