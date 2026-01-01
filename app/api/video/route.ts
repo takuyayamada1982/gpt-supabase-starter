@@ -4,6 +4,7 @@ import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
 import { Buffer } from 'buffer';
 import { toFile } from 'openai/uploads';
+import { checkPlanGuardByUserId } from '../_shared/planGuard'; // ★追加
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -31,9 +32,35 @@ export async function POST(req: NextRequest) {
   try {
     const { userId, prompt, filePath } = await req.json();
 
+    // 0) 認証チェック
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
+
+    // 0-1) プランガード（URL/画像/Chat と同じロック）
+    const guard = await checkPlanGuardByUserId(userId);
+
+    if (!guard.allowed) {
+      if (guard.reason === 'trial_expired') {
+        return NextResponse.json(
+          {
+            error: 'TRIAL_EXPIRED',
+            message:
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          },
+          { status: 403 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: guard.reason ?? 'forbidden',
+          message: '利用権限がありません。',
+        },
+        { status: 403 }
+      );
+    }
+
     if (!prompt) {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 });
     }
@@ -157,7 +184,6 @@ export async function POST(req: NextRequest) {
     const transcription = await openai.audio.transcriptions.create({
       file: audioFile,
       model: 'gpt-4o-transcribe',
-      // gpt-4o-transcribe は response_format: 'json' 固定なので明示不要
       // language: 'ja', // 日本語メインなら指定してもOK
     });
 
