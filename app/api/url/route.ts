@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { cookies } from 'next/headers';
 import OpenAI from 'openai';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
 
 import { supabase as adminSupabase } from '../_shared/profile';
 import { checkPlanGuardByUserId } from '../_shared/planGuard';
@@ -11,15 +10,71 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
+/**
+ * Supabase の auth cookie 名を推測する
+ * 例: NEXT_PUBLIC_SUPABASE_URL = https://abc123.supabase.co
+ * → sb-abc123-auth-token
+ */
+function getSupabaseAuthCookieName(): string | null {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!url) return null;
+
+  try {
+    const hostname = new URL(url).hostname; // abc123.supabase.co
+    const projectRef = hostname.split('.')[0];
+    return `sb-${projectRef}-auth-token`;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Cookie から access_token を取り出してユーザーを取得
+ * sb-<projectRef>-auth-token 形式と sb-access-token の両方をサポート
+ */
+async function getUserFromCookies() {
+  const cookieStore = cookies();
+
+  let accessToken: string | null = null;
+
+  // 1) 新形式: sb-<projectRef>-auth-token （中身は JSON 文字列）
+  const authCookieName = getSupabaseAuthCookieName();
+  if (authCookieName) {
+    const authCookie = cookieStore.get(authCookieName)?.value;
+    if (authCookie) {
+      try {
+        const parsed = JSON.parse(authCookie);
+        if (parsed?.access_token && typeof parsed.access_token === 'string') {
+          accessToken = parsed.access_token;
+        }
+      } catch {
+        // JSON でなければ無視して後続へ
+      }
+    }
+  }
+
+  // 2) 旧形式: sb-access-token （トークン文字列そのもの）
+  if (!accessToken) {
+    accessToken = cookieStore.get('sb-access-token')?.value ?? null;
+  }
+
+  if (!accessToken) {
+    return { user: null, error: 'no_token' as const };
+  }
+
+  const { data, error } = await adminSupabase.auth.getUser(accessToken);
+
+  if (error || !data.user) {
+    return { user: null, error: 'auth_error' as const };
+  }
+
+  return { user: data.user, error: null as const };
+}
+
 export async function POST(req: NextRequest) {
   try {
-    // ① Cookie ベースの supabase クライアント
-    const supabase = createRouteHandlerClient({ cookies });
-
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
+    // ① Cookie からユーザー取得（上の getUserFromCookies を使用）
+    const { user, error: userError } = await getUserFromCookies();
 
     if (userError || !user) {
       return NextResponse.json(
