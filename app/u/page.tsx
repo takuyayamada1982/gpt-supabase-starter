@@ -426,9 +426,7 @@ export default function UPage() {
           : j.facebook || '',
       );
       setXText(
-        Array.isArray(posts.x) && posts.x.length > 0
-          ? posts.x[0]
-          : j.x || '',
+        Array.isArray(posts.x) && posts.x.length > 0 ? posts.x[0] : j.x || '',
       );
 
       alert('URLからSNS向け文章を生成しました');
@@ -679,6 +677,8 @@ export default function UPage() {
   const sendChat = async () => {
     if (!userId || !chatInput) return;
     setChatLoading(true);
+
+    // 先にユーザーの発言を表示（既存挙動を維持）
     setMessages((m) => [...m, { role: 'user', content: chatInput }]);
 
     try {
@@ -688,13 +688,47 @@ export default function UPage() {
         body: JSON.stringify({ userId, userText: chatInput }),
       });
       const j = await res.json();
+
+      // HTTPステータスがエラーの場合
+      if (!res.ok) {
+        if (j?.error === 'TRIAL_EXPIRED') {
+          alert(
+            '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          );
+        } else {
+          alert(
+            `エラー: ${
+              j?.message || j?.error || '不明なエラーが発生しました。'
+            }`,
+          );
+        }
+        return;
+      }
+
+      // 2xx でも error フィールドが入っている場合
+      if (j?.error) {
+        if (j.error === 'TRIAL_EXPIRED') {
+          alert(
+            '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          );
+        } else {
+          alert(
+            `エラー: ${
+              j?.message || j?.error || '不明なエラーが発生しました。'
+            }`,
+          );
+        }
+        return;
+      }
+
+      // 正常時のみアシスタントメッセージを追加
       setMessages((m) => [
         ...m,
         { role: 'assistant', content: j.text || '' },
       ]);
       setChatInput('');
     } catch (e: any) {
-      alert(`エラー: ${e.message}`);
+      alert(`エラー: ${e?.message || String(e)}`);
     } finally {
       setChatLoading(false);
     }
