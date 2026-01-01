@@ -1,110 +1,1270 @@
-// app/page.tsx
-import Link from 'next/link';
+'use client';
 
-export default function Home() {
-  return (
-    <main
-      style={{
-        minHeight: '100vh',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: 'system-ui, -apple-system, BlinkMacSystemFont, sans-serif',
-        backgroundColor: '#f5f5f5',
-      }}
-    >
-      <section
+import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { supabase } from '@/lib/supabaseClient';
+
+type Msg = { role: 'user' | 'assistant'; content: string };
+
+// 今月の開始・終了を返すヘルパー
+function getMonthRange() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+  const start = new Date(year, month, 1).toISOString();
+  const end = new Date(year, month + 1, 1).toISOString();
+  return { start, end };
+}
+
+// 上部に出すバナー（トライアル + ご契約中）
+function TrialBanner({ profile }: { profile: any }) {
+  if (!profile?.registered_at) return null;
+
+  // 契約中（plan_status = 'paid'）なら「ご契約中」表示
+  if (profile.plan_status === 'paid') {
+    return (
+      <div
         style={{
-          backgroundColor: '#ffffff',
-          padding: '32px 28px',
-          borderRadius: '16px',
-          boxShadow: '0 12px 30px rgba(0,0,0,0.08)',
-          maxWidth: '640px',
-          width: '90%',
+          backgroundColor: '#111827', // ダークネイビー
+          color: '#bfdbfe',
+          padding: '8px 12px',
+          borderRadius: 10,
+          fontSize: 12,
+          textAlign: 'center',
+          marginBottom: 12,
+          border: '1px solid #1f2937',
         }}
       >
-        <h1
+        ✅ ご契約中です。いつもご利用ありがとうございます。
+      </div>
+    );
+  }
+
+  // ここから下はトライアル中/終了後の表示
+  const registered = new Date(profile.registered_at);
+  const today = new Date();
+  const diffDays = Math.floor(
+    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24),
+  );
+
+  const trialDays = profile.trial_type === 'referral' ? 30 : 7;
+  const remaining = trialDays - diffDays;
+
+  let bg = '#064e3b';
+  let textColor = '#bbf7d0';
+  let text = `無料期間：残り ${remaining}日`;
+
+  if (remaining > 2) {
+    if (profile.trial_type === 'referral') {
+      bg = '#1d4ed8';
+      textColor = '#bfdbfe';
+      text = `紹介経由：無料期間 残り ${remaining}日`;
+    } else {
+      bg = '#064e3b';
+      textColor = '#bbf7d0';
+      text = `無料期間：残り ${remaining}日`;
+    }
+  } else if (remaining > 0) {
+    bg = '#7c2d12';
+    textColor = '#fed7aa';
+    text = `まもなく終了（残り${remaining}日）`;
+  } else if (remaining === 0) {
+    bg = '#b91c1c';
+    textColor = '#fee2e2';
+    text = '無料期間は本日で終了します';
+  } else {
+    const daysAgo = Math.abs(remaining);
+    bg = '#7f1d1d';
+    textColor = '#fecaca';
+    text = `無料期間終了（${daysAgo}日前）`;
+  }
+
+  return (
+    <div
+      style={{
+        backgroundColor: bg,
+        color: textColor,
+        padding: '8px 12px',
+        borderRadius: 10,
+        fontSize: 12,
+        textAlign: 'center',
+        marginBottom: 12,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+export default function UPage() {
+  const router = useRouter();
+
+  const [userId, setUserId] = useState('');
+  const [profile, setProfile] = useState<any>(null);
+
+  // ===== URL → 要約/タイトル/ハッシュタグ/SNS =====
+  const [urlInput, setUrlInput] = useState('');
+  const [urlLoading, setUrlLoading] = useState(false);
+  const [urlSummary, setUrlSummary] = useState('');
+  const [urlTitles, setUrlTitles] = useState<string[]>([]);
+  const [urlHashtags, setUrlHashtags] = useState<string[]>([]);
+  const [instaText, setInstaText] = useState('');
+  const [fbText, setFbText] = useState('');
+  const [xText, setXText] = useState('');
+
+  // 紹介パターン（1〜3のラジオボタン）
+  const [stance, setStance] = useState<'self' | 'others' | 'third'>('self');
+
+  const stancePrompts = {
+    self:
+      'あなたは投稿者本人です。自分が作成したSNS記事を紹介する立場で、要約とSNS投稿文を作成してください。主語は「私」「当方」でも自然に。過度な自画自賛は避けつつ、背景やねらい、見どころを簡潔に添えてください。',
+    others:
+      'あなたは第三者として、他人のSNS記事を自分のフォロワーに紹介します。著者へのリスペクトを示し、出典・引用であることを明確にしつつ、紹介者としての簡単な一言コメントを添えてください。',
+    third:
+      'あなたは中立の紹介者です。第三者の記事を客観的に要約し、価値やポイント、読むべき理由を端的に伝えてください。主観を抑え、出典明記を前提にしてください。',
+  } as const;
+
+  // ===== 画像 / 動画 → SNS =====
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [videoFile, setVideoFile] = useState<File | null>(null); // 動画ファイル（サムネ生成用）
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [imageNote, setImageNote] = useState(''); // 補足説明欄
+
+  // ★ 動画サムネ用の残り回数表示用
+  const [videoRemaining, setVideoRemaining] = useState<number | null>(null);
+  const [videoMaxLimit, setVideoMaxLimit] = useState<number | null>(null);
+  const [videoCountLoading, setVideoCountLoading] = useState(false);
+
+  // ===== チャット =====
+  const [chatInput, setChatInput] = useState('');
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [chatLoading, setChatLoading] = useState(false);
+
+  // === 認証 + 解約チェック ===
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.auth.getUser();
+      const user = data.user;
+
+      // セッションが無ければ /auth へ
+      if (!user) {
+        router.push('/auth');
+        return;
+      }
+
+      // userId は今後のAPI呼び出し用に保持
+      setUserId(user.id);
+
+      // プロファイル取得（解約情報込み）: auth.uid() = profiles.id で紐づける
+      const { data: p, error: profileError } = await supabase
+        .from('profiles')
+        .select(
+          'registered_at, trial_type, plan_status, plan_tier, is_canceled, plan_valid_until',
+        )
+        .eq('id', user.id) // ★ ←ここだけ email→id に変更
+        .maybeSingle();
+
+      if (profileError) {
+        console.error('profileError in /u:', profileError);
+      }
+
+      if (!p) {
+        setProfile(null);
+        return;
+      }
+
+      setProfile(p);
+
+      // 解約済み & 有効期限切れなら強制ログアウト
+      if (p.is_canceled) {
+        if (!p.plan_valid_until) {
+          alert(
+            'ご契約はすでに終了しているため、サービスをご利用いただけません。',
+          );
+          await supabase.auth.signOut();
+          router.push('/auth');
+          return;
+        }
+
+        const now = new Date();
+        const end = new Date(String(p.plan_valid_until));
+        const diffMs = end.getTime() - now.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+        if (diffDays <= 0) {
+          alert(
+            'ご契約の有効期限が終了しているため、サービスをご利用いただけません。',
+          );
+          await supabase.auth.signOut();
+          router.push('/auth');
+          return;
+        }
+      }
+    })();
+  }, [router]);
+
+  // プラン情報
+  const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
+  const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
+
+  // Trial / Pro だけ動画サムネ機能を使用可
+  const canUseVideoThumb =
+    planStatus === 'trial' || (planStatus === 'paid' && planTier === 'pro');
+
+  // Trial / Pro の場合は usage_logs から今月の video_thumb 利用回数を取得
+  useEffect(() => {
+    const fetchVideoUsage = async () => {
+      if (!userId) return;
+
+      // トライアル：期間中10回 / Pro：月30回
+      let max: number | null = null;
+      if (planStatus === 'trial') {
+        max = 10;
+      } else if (planStatus === 'paid' && planTier === 'pro') {
+        max = 30;
+      } else {
+        setVideoMaxLimit(null);
+        setVideoRemaining(null);
+        return;
+      }
+
+      setVideoCountLoading(true);
+      try {
+        const { start, end } = getMonthRange();
+
+        const { data: logs, error } = await supabase
+          .from('usage_logs')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('type', 'video_thumb')
+          .gte('created_at', start)
+          .lt('created_at', end);
+
+        if (error) {
+          console.error('usage_logs fetch error:', error);
+          setVideoMaxLimit(max);
+          setVideoRemaining(max); // エラー時はいったん満額として扱う
+          return;
+        }
+
+        const usedCount = logs?.length ?? 0;
+        const remaining = Math.max(0, max - usedCount);
+        setVideoMaxLimit(max);
+        setVideoRemaining(remaining);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setVideoCountLoading(false);
+      }
+    };
+
+    fetchVideoUsage();
+  }, [userId, planStatus, planTier]);
+
+  // ===== テーマ（色など） =====
+  const colors = {
+    pageBg: '#FCFAF5',
+    ink: '#111111',
+    panelBorder: '#E5E7EB',
+    panelBg: '#FFFFFF',
+    panelShadow: '0 6px 20px rgba(0,0,0,0.06)',
+
+    igBg: '#FFF5F9',
+    igBorder: '#F8C2D8',
+    igText: '#3B1C2A',
+
+    fbBg: '#F3F8FF',
+    fbBorder: '#BBD5FF',
+    fbText: '#0F2357',
+
+    xBg: '#F7F7F8',
+    xBorder: '#D6D6DA',
+    xText: '#111111',
+
+    btnBg: '#111111',
+    btnText: '#FFFFFF',
+    btnBorder: '#111111',
+    btnGhostBorder: '#DDDDDD',
+    btnGhostBg: '#FFFFFF',
+  };
+
+  const pageStyle = {
+    maxWidth: 1080,
+    margin: '0 auto',
+    padding: 16,
+    background: colors.pageBg,
+    boxSizing: 'border-box' as const,
+  };
+
+  const panel = {
+    background: colors.panelBg,
+    border: `1px solid ${colors.panelBorder}`,
+    borderRadius: 14,
+    padding: 16,
+    boxShadow: colors.panelShadow,
+    overflow: 'hidden' as const,
+  };
+
+  const btn = {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: `1px solid ${colors.btnBorder}`,
+    background: colors.btnBg,
+    color: colors.btnText,
+    fontWeight: 600 as const,
+  };
+  const btnGhost = {
+    padding: '10px 14px',
+    borderRadius: 10,
+    border: `1px solid ${colors.btnGhostBorder}`,
+    background: colors.btnGhostBg,
+    color: colors.ink,
+    fontWeight: 600 as const,
+  };
+  const inputStyle = {
+    border: `1px solid ${colors.btnGhostBorder}`,
+    padding: 12,
+    borderRadius: 10,
+    width: '100%',
+    boxSizing: 'border-box' as const,
+    background: '#FFFFFF',
+  };
+  const labelStyle = {
+    fontSize: 12,
+    color: '#6b7280',
+    marginBottom: 6,
+    display: 'block' as const,
+  };
+
+  const cardGrid = {
+    display: 'grid',
+    gap: 12,
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+  };
+
+  const snsCardBase = {
+    borderRadius: 12,
+    padding: 12,
+    boxSizing: 'border-box' as const,
+    overflow: 'hidden' as const,
+  };
+
+  const textAreaStyle = {
+    ...inputStyle,
+    height: 160,
+    resize: 'vertical' as const,
+    overflow: 'auto' as const,
+    whiteSpace: 'pre-wrap' as const,
+    wordBreak: 'break-word' as const,
+  };
+
+  const copy = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('コピーしました');
+    } catch {
+      alert('コピーに失敗しました');
+    }
+  };
+
+  // ===== URL → まとめて生成 =====
+  const generateFromURL = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!urlInput) {
+      alert('URLを入力してください');
+      return;
+    }
+
+    setUrlLoading(true);
+    try {
+      const res = await fetch('/api/url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          url: urlInput,
+          promptContext: stancePrompts[stance],
+        }),
+      });
+      const j = await res.json();
+
+      if (!res.ok || j?.error) {
+        if (j?.error === 'TRIAL_EXPIRED') {
+          alert(
+            j.message ||
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          );
+        } else {
+          alert(
+            j?.message ||
+              `エラーが発生しました（${j?.error || '不明なエラー'}）`,
+          );
+        }
+        return;
+      }
+
+      setUrlSummary(j.summary || '');
+      setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
+      setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
+
+      setInstaText(j.instagram || '');
+      setFbText(j.facebook || '');
+      setXText(j.x || '');
+
+      alert('URLからSNS向け文章を生成しました');
+    } catch (e: any) {
+      alert(`エラー: ${e.message}`);
+    } finally {
+      setUrlLoading(false);
+    }
+  };
+
+  // ===== 動画からサムネ画像を切り出す =====
+  const extractThumbnailFromVideo = (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const video = document.createElement('video');
+        const url = URL.createObjectURL(file);
+
+        const cleanup = () => {
+          URL.revokeObjectURL(url);
+          video.remove();
+        };
+
+        video.src = url;
+        video.preload = 'metadata';
+        video.muted = true;
+        (video as any).playsInline = true;
+
+        video.onloadedmetadata = () => {
+          const duration = video.duration;
+          // 1秒目 or 再生時間の半分あたりを狙う
+          let target = 1;
+          if (!isNaN(duration) && duration > 0) {
+            target = Math.min(1, duration / 2);
+          }
+          video.currentTime = target;
+        };
+
+        video.onseeked = () => {
+          const canvas = document.createElement('canvas');
+          const w = video.videoWidth || 1280;
+          const h = video.videoHeight || 720;
+          canvas.width = w;
+          canvas.height = h;
+
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            cleanup();
+            reject(new Error('サムネイル生成に失敗しました（canvas取得エラー）'));
+            return;
+          }
+          ctx.drawImage(video, 0, 0, w, h);
+
+          canvas.toBlob(
+            (blob) => {
+              cleanup();
+              if (!blob) {
+                reject(new Error('サムネイル生成に失敗しました（blob生成エラー）'));
+                return;
+              }
+              const thumbFile = new File([blob], 'thumbnail.jpg', {
+                type: 'image/jpeg',
+              });
+              resolve(thumbFile);
+            },
+            'image/jpeg',
+            0.85,
+          );
+        };
+
+        video.onerror = () => {
+          cleanup();
+          reject(new Error('動画の読み込みに失敗しました'));
+        };
+      } catch (e) {
+        reject(e);
+      }
+    });
+  };
+
+  // ===== 画像 / サムネ共通の生成ロジック =====
+  const runImageGeneration = async (targetFile: File) => {
+    if (
+      (targetFile.type || '').toLowerCase().includes('heic') ||
+      (targetFile.type || '').toLowerCase().includes('heif')
+    ) {
+      alert(
+        'HEICは非対応です。iPhoneは「互換性優先」かスクショ画像で試してください。',
+      );
+      return;
+    }
+    if (targetFile.size > 8 * 1024 * 1024) {
+      alert('画像は8MB以下でお願いします。');
+      return;
+    }
+
+    setIsGenerating(true);
+
+    try {
+      const ext =
+        targetFile.name.split('.').pop() ||
+        (targetFile.type.includes('png') ? 'png' : 'jpg');
+      const safeFileName = `${Date.now()}.${ext}`;
+      const path = `${userId}/${safeFileName}`;
+
+      const up = await supabase.storage
+        .from('uploads')
+        .upload(path, targetFile, {
+          upsert: true,
+          contentType: targetFile.type || 'image/jpeg',
+        });
+
+      if (up.error) {
+        alert(`アップロード失敗：${up.error.message}`);
+        return;
+      }
+
+      const pInsta =
+        'Instagram向け：画像の雰囲気が一目で伝わるように、' +
+        '冒頭に1〜2個のアイコン（例：📸✨🎨など）を入れ、文中にも合計5個以上の絵文字・顔文字を必ず入れてください。' +
+        '砕けた口調で300〜400文字程度、日本語で書き、最後に3〜6個のハッシュタグを付けてください。';
+
+      const pFb =
+        'Facebook向け：人情味のある長文ストーリーとして、起→承→転→結の流れで約700文字の日本語文章を作ってください。' +
+        '途中で場面や気持ちの変化が分かるように、段落ごとに改行を入れてください。' +
+        '最後は「あなたならどう感じますか？」「ぜひコメントで教えてください。」のような問いかけで締めてください。' +
+        '絵文字は1〜3個までに控えめにし、最後に3〜6個のハッシュタグを付けてください。';
+
+      const pX =
+        'X向け：150文字程度で要点だけを伝えるコンパクトな投稿文を日本語で作ってください。' +
+        '文中に2〜3個の絵文字を入れ、最後に2〜4個のハッシュタグを付けてください。';
+
+      const payload = (prompt: string) => ({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          userId,
+          prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+          filePath: path,
+        }),
+      });
+
+      const [r1, r2, r3] = await Promise.all([
+        fetch('/api/vision', payload(pInsta)),
+        fetch('/api/vision', payload(pFb)),
+        fetch('/api/vision', payload(pX)),
+      ]);
+
+      const [j1, j2, j3] = await Promise.all([r1.json(), r2.json(), r3.json()]);
+
+      if (!r1.ok || !r2.ok || !r3.ok || j1?.error || j2?.error || j3?.error) {
+        const err = j1?.error || j2?.error || j3?.error;
+        const msg = j1?.message || j2?.message || j3?.message;
+        if (err === 'TRIAL_EXPIRED') {
+          alert(
+            msg ||
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          );
+        } else {
+          alert(
+            msg || `エラーが発生しました（${err || '不明なエラー'}）`,
+          );
+        }
+        return;
+      }
+
+      setInstaText(j1.text || '');
+      setFbText(j2.text || '');
+      setXText(j3.text || '');
+
+      alert('SNS向け文章を生成しました');
+    } catch (e: any) {
+      console.error(e);
+      alert(`エラー: ${e.message}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // ===== 画像 → SNS =====
+  const generateFromImage = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!imageFile) {
+      alert('画像を選択してください');
+      return;
+    }
+    await runImageGeneration(imageFile);
+  };
+
+  // ===== 動画 → サムネ → SNS =====
+  const generateFromVideo = async () => {
+    if (!userId) {
+      alert('ログインが必要です');
+      return;
+    }
+    if (!videoFile) {
+      alert('動画ファイルを選択してください');
+      return;
+    }
+
+    // Starter / 未契約は利用不可（UIはそのまま、押したときに止めるだけ）
+    if (!canUseVideoThumb) {
+      if (planStatus === 'paid' && planTier === 'starter') {
+        alert(
+          '「動画からサムネを作って3種類の原稿を作る」機能は Starter プランではご利用いただけません。トライアル期間中または Pro プランでご利用いただけます。',
+        );
+      } else {
+        alert(
+          'この機能はトライアル期間中または Pro プランでご利用いただけます。マイページからプランをご確認ください。',
+        );
+      }
+      return;
+    }
+
+    // 回数上限チェック（Trial=10, Pro=30）
+    if (videoMaxLimit !== null && videoRemaining !== null) {
+      if (videoRemaining <= 0) {
+        alert(
+          '動画からサムネ生成する機能の今月の上限回数に達しています。（Trial: 期間中10回 / Pro: 月30回）',
+        );
+        return;
+      }
+    }
+
+    try {
+      setIsGenerating(true);
+      // まず動画からサムネ画像を作る
+      const thumb = await extractThumbnailFromVideo(videoFile);
+      // そのサムネ画像を使って、画像と同じフローで生成
+      await runImageGeneration(thumb);
+
+      // 生成に成功したら usage_logs に video_thumb を1件記録し、残り回数を1減らす
+      if (canUseVideoThumb) {
+        try {
+          await supabase.from('usage_logs').insert({
+            user_id: userId,
+            type: 'video_thumb',
+            model: 'client_video_thumb',
+            prompt_tokens: 0,
+            completion_tokens: 0,
+            total_tokens: 0,
+            cost: 20, // 仮のコスト（円）
+          });
+
+          setVideoRemaining((prev) =>
+            prev === null ? prev : Math.max(prev - 1, 0),
+          );
+        } catch (logErr) {
+          console.error('usage_logs insert (video_thumb) error:', logErr);
+        }
+      }
+    } catch (e: any) {
+      console.error(e);
+      alert(`サムネイル生成に失敗しました: ${e.message || String(e)}`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  // ===== チャット =====
+  const sendChat = async () => {
+    if (!userId || !chatInput) return;
+
+    setChatLoading(true);
+
+    // 先に自分の発言をメッセージに追加
+    const userMessage = chatInput;
+    setMessages((m) => [...m, { role: 'user', content: userMessage }]);
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId, userText: userMessage }),
+      });
+
+      const j = await res.json();
+
+      // エラー応答をチェック
+      if (!res.ok || j?.error) {
+        if (j?.error === 'TRIAL_EXPIRED') {
+          alert(
+            j.message ||
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          );
+        } else {
+          alert(
+            j?.message ||
+              `エラーが発生しました（${j?.error || '不明なエラー'}）`,
+          );
+        }
+        return;
+      }
+
+      const text: string = j.text || '';
+      setMessages((m) => [...m, { role: 'assistant', content: text }]);
+      setChatInput('');
+    } catch (e: any) {
+      alert(`通信エラーが発生しました: ${e.message || String(e)}`);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  return (
+    <main style={pageStyle}>
+      {/* 🔔 トライアル / ご契約中バナー */}
+      <TrialBanner profile={profile} />
+
+      {/* ヘッダー：左にタイトル、右にマイページ＆ログアウト */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 12,
+        }}
+      >
+        <h2
           style={{
-            fontSize: '28px',
+            fontSize: 20,
+            fontWeight: 800,
+            color: colors.ink,
+          }}
+        >
+          ユーザーページ
+        </h2>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button style={btnGhost} onClick={() => router.push('/mypage')}>
+            マイページ
+          </button>
+
+          <button
+            style={btnGhost}
+            onClick={async () => {
+              await supabase.auth.signOut();
+              router.push('/auth');
+            }}
+          >
+            ログアウト
+          </button>
+        </div>
+      </div>
+
+      {/* ===== ① URL → 生成（上段） ===== */}
+      <div style={{ ...panel, marginBottom: 16 }}>
+        <h3
+          style={{
+            fontSize: 16,
             fontWeight: 700,
-            marginBottom: '8px',
+            marginBottom: 8,
+            color: colors.ink,
           }}
         >
-          Auto post studio
-        </h1>
-        <p
-          style={{
-            fontSize: '14px',
-            color: '#666',
-            marginBottom: '24px',
-          }}
-        >
-          URL要約・画像説明生成・Chat補助をまとめてこなす、
-          SNS投稿サポートツールです。
-        </p>
+          ① URLからSNS向け文章を自動生成
+        </h3>
+        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          <label style={labelStyle}>記事やブログのURL</label>
+          <input
+            style={inputStyle}
+            placeholder="https://example.com/article"
+            value={urlInput}
+            onChange={(e) => setUrlInput(e.target.value)}
+            inputMode="url"
+          />
 
-        <div
-          style={{
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '12px',
-            marginBottom: '24px',
-          }}
-        >
-          <p style={{ fontSize: '14px', color: '#333' }}>
-            ログイン済みの方は「マイページへ」、<br />
-            まだの方は「ログイン / 新規登録」から進んでください。
-          </p>
+          {/* ラジオボタン：紹介する立場 */}
+          <div style={{ marginTop: 4 }}>
+            <div
+              style={{
+                fontSize: 12,
+                fontWeight: 700,
+                marginBottom: 6,
+                color: '#374151',
+              }}
+            >
+              紹介する立場を選んでください
+            </div>
+            <div style={{ display: 'grid', gap: 6 }}>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <input
+                  type="radio"
+                  name="stance"
+                  value="self"
+                  checked={stance === 'self'}
+                  onChange={() => setStance('self')}
+                />
+                ① 自分が作成したSNS記事を紹介（自分目線）
+              </label>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <input
+                  type="radio"
+                  name="stance"
+                  value="others"
+                  checked={stance === 'others'}
+                  onChange={() => setStance('others')}
+                />
+                ② 他人のSNS記事を自分が紹介（紹介者目線）
+              </label>
+              <label
+                style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              >
+                <input
+                  type="radio"
+                  name="stance"
+                  value="third"
+                  checked={stance === 'third'}
+                  onChange={() => setStance('third')}
+                />
+                ③ 第三者の記事を紹介（中立・客観）
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <button
+              style={urlLoading ? btnGhost : btn}
+              disabled={!urlInput || urlLoading}
+              onClick={generateFromURL}
+            >
+              {urlLoading ? '生成中…' : 'URLから3種類の原稿を作る'}
+            </button>
+          </div>
         </div>
 
-        <div
+        {/* 要約・タイトル案・ハッシュタグ候補 */}
+        {urlSummary || urlTitles.length || urlHashtags.length ? (
+          <div
+            style={{
+              borderTop: '1px dashed #e5e7eb',
+              marginTop: 12,
+              paddingTop: 12,
+              display: 'grid',
+              gap: 12,
+            }}
+          >
+            {/* 要約 */}
+            {urlSummary && (
+              <div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: colors.ink,
+                  }}
+                >
+                  要約（200〜300文字）
+                </div>
+                <div
+                  style={{
+                    border: '1px solid #eee',
+                    borderRadius: 10,
+                    padding: 12,
+                    background: '#FAFAFA',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {urlSummary}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <button style={btnGhost} onClick={() => copy(urlSummary)}>
+                    要約をコピー
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* タイトル案 */}
+            {urlTitles.length > 0 && (
+              <div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: colors.ink,
+                  }}
+                >
+                  タイトル案（3つ）
+                </div>
+                <ul
+                  style={{ listStyle: 'disc', paddingLeft: 20, margin: 0 }}
+                >
+                  {urlTitles.map((t, i) => (
+                    <li
+                      key={i}
+                      style={{
+                        marginBottom: 6,
+                        display: 'flex',
+                        gap: 8,
+                        alignItems: 'flex-start',
+                      }}
+                    >
+                      <span style={{ flex: 1 }}>{t}</span>
+                      <button style={btnGhost} onClick={() => copy(t)}>
+                        コピー
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* ハッシュタグ候補 */}
+            {urlHashtags.length > 0 && (
+              <div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    marginBottom: 6,
+                    color: colors.ink,
+                  }}
+                >
+                  ハッシュタグ候補（10〜15）
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {urlHashtags.map((h, i) => (
+                    <span
+                      key={i}
+                      style={{
+                        border: '1px solid #eee',
+                        borderRadius: 999,
+                        padding: '6px 10px',
+                        background: '#fff',
+                      }}
+                    >
+                      {h}
+                    </span>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8 }}>
+                  <button
+                    style={btnGhost}
+                    onClick={() => copy(urlHashtags.join(' '))}
+                  >
+                    すべてコピー
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        ) : null}
+      </div>
+
+      {/* ===== ② 画像 / 動画 → 生成（中段） ===== */}
+      <div style={{ ...panel, marginBottom: 16 }}>
+        <h3
           style={{
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: '12px',
-            marginBottom: '12px',
+            fontSize: 16,
+            fontWeight: 700,
+            marginBottom: 8,
+            color: colors.ink,
           }}
         >
-          {/* マイページ（ダッシュボード）へのリンク。パスは実際のURLに合わせて変更 */}
-          <Link
-            href="/u"
-            style={{
-              padding: '10px 18px',
-              borderRadius: '999px',
-              backgroundColor: '#111827',
-              color: '#fff',
-              fontSize: '14px',
-              fontWeight: 600,
-              textDecoration: 'none',
+          ② 画像 or 動画サムネからSNS向け文章を自動生成
+        </h3>
+        <div style={{ display: 'grid', gap: 8, marginBottom: 12 }}>
+          {/* 画像ファイル */}
+          <label style={labelStyle}>画像ファイル</label>
+          <input
+            type="file"
+            accept="image/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              if (!f) {
+                setImageFile(null);
+                return;
+              }
+              const t = (f.type || '').toLowerCase();
+              if (t.includes('heic') || t.includes('heif')) {
+                alert(
+                  'HEICは非対応です。iPhoneは「互換性優先」かスクショでアップしてください。',
+                );
+                (e.currentTarget as HTMLInputElement).value = '';
+                setImageFile(null);
+                return;
+              }
+              setImageFile(f);
             }}
-          >
-            マイページへ
-          </Link>
+          />
 
-          {/* 認証ページへのリンク。/auth や /login など実際のパスに合わせて変更 */}
-          <Link
-            href="/auth"
+          {/* 動画ファイル（サムネ用） */}
+          <label style={labelStyle}>動画ファイル（サムネイル生成用・任意）</label>
+          <input
+            type="file"
+            accept="video/*"
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              setVideoFile(f || null);
+            }}
+          />
+          <div
             style={{
-              padding: '10px 18px',
-              borderRadius: '999px',
-              border: '1px solid #d1d5db',
-              backgroundColor: '#fff',
-              color: '#111827',
-              fontSize: '14px',
-              fontWeight: 500,
-              textDecoration: 'none',
+              fontSize: 11,
+              color: '#6b7280',
+              lineHeight: 1.5,
+              marginTop: -2,
             }}
           >
-            ログイン / 新規登録
-          </Link>
+            ※ 動画から1枚サムネイル画像を自動で切り出し、その画像＋補足説明をもとに文章を生成します。音声は使用しません。
+          </div>
+
+          {/* Trial / Pro の残り回数表示 */}
+          <div
+            style={{
+              fontSize: 11,
+              color: '#4b5563',
+              marginTop: 2,
+            }}
+          >
+            {videoCountLoading ? (
+              <>動画サムネイル機能の残り回数を取得しています…</>
+            ) : canUseVideoThumb && videoMaxLimit !== null && videoRemaining !== null ? (
+              <>
+                動画サムネイル機能（Trial: 期間中10回 / Pro: 月30回）
+                <br />
+                現在の残り回数：{videoRemaining} / {videoMaxLimit} 回
+              </>
+            ) : (
+              <>
+                動画サムネイル機能はトライアル期間中または Pro プランでご利用いただけます。
+                Starterプランではご利用いただけません。
+              </>
+            )}
+          </div>
+
+          {/* 補足説明欄 */}
+          <label style={labelStyle}>補足説明（どんな写真/動画か、状況など）</label>
+          <textarea
+            style={{
+              ...inputStyle,
+              height: 72,
+              resize: 'vertical' as const,
+              whiteSpace: 'pre-wrap' as const,
+            }}
+            placeholder="例：地域イベントで撮影した動画。子どもたちが作った作品展示の様子。"
+            value={imageNote}
+            onChange={(e) => setImageNote(e.target.value)}
+          />
+
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 8,
+              marginTop: 4,
+            }}
+          >
+            <button
+              style={isGenerating ? btnGhost : btn}
+              onClick={generateFromImage}
+              disabled={!imageFile || isGenerating}
+            >
+              {isGenerating ? '生成中…' : '画像から3種類の原稿を作る'}
+            </button>
+
+            <button
+              style={isGenerating ? btnGhost : btnGhost}
+              onClick={generateFromVideo}
+              disabled={!videoFile || isGenerating}
+            >
+              {isGenerating
+                ? 'サムネ生成中…'
+                : '動画からサムネを作って3種類の原稿を作る'}
+            </button>
+          </div>
         </div>
 
-        <p style={{ fontSize: '11px', color: '#9ca3af' }}>
-          ※ ここではリダイレクトは行わず、リンクでのみ遷移します。
-          <br />
-          （無限リダイレクト対策のため）
-        </p>
-      </section>
+        {/* 3カラム：SNS欄 */}
+        <div style={cardGrid}>
+          {/* Instagram */}
+          <div
+            style={{
+              ...snsCardBase,
+              background: colors.igBg,
+              border: `1px solid ${colors.igBorder}`,
+              color: colors.igText,
+            }}
+          >
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>
+              Instagram（約200文字＋ハッシュタグ）
+            </div>
+            <textarea
+              style={{ ...textAreaStyle, background: '#FFFFFF' }}
+              value={instaText}
+              onChange={(e) => setInstaText(e.target.value)}
+              placeholder="ここにInstagram向けの説明が入ります"
+            />
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              <button style={btnGhost} onClick={() => copy(instaText)}>
+                コピー
+              </button>
+            </div>
+          </div>
+
+          {/* Facebook */}
+          <div
+            style={{
+              ...snsCardBase,
+              background: colors.fbBg,
+              border: `1px solid ${colors.fbBorder}`,
+              color: colors.fbText,
+            }}
+          >
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>
+              Facebook（ストーリー重視・約700文字＋ハッシュタグ）
+            </div>
+            <textarea
+              style={{ ...textAreaStyle, height: 220, background: '#FFFFFF' }}
+              value={fbText}
+              onChange={(e) => setFbText(e.target.value)}
+              placeholder="ここにFacebook向けの説明が入ります"
+            />
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              <button style={btnGhost} onClick={() => copy(fbText)}>
+                コピー
+              </button>
+            </div>
+          </div>
+
+          {/* X */}
+          <div
+            style={{
+              ...snsCardBase,
+              background: colors.xBg,
+              border: `1px solid ${colors.xBorder}`,
+              color: colors.xText,
+            }}
+          >
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>
+              X（150文字コンパクト＋ハッシュタグ）
+            </div>
+            <textarea
+              style={{ ...textAreaStyle, height: 140, background: '#FFFFFF' }}
+              value={xText}
+              onChange={(e) => setXText(e.target.value)}
+              placeholder="ここにX向けの説明が入ります"
+            />
+            <div
+              style={{
+                marginTop: 8,
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+              }}
+            >
+              <button style={btnGhost} onClick={() => copy(xText)}>
+                コピー
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ===== ③ 通常チャット（下段） ===== */}
+      <div style={{ ...panel }}>
+        <h3
+          style={{
+            fontSize: 16,
+            fontWeight: 700,
+            marginBottom: 8,
+            color: colors.ink,
+          }}
+        >
+          ③ 通常チャット
+        </h3>
+        <div style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
+          <label style={labelStyle}>記載例（そのまま書き換えてOK）</label>
+          <textarea
+            style={{
+              ...inputStyle,
+              height: 96,
+              resize: 'vertical' as const,
+              overflow: 'auto' as const,
+              whiteSpace: 'pre-wrap' as const,
+            }}
+            placeholder={
+              '例: 「このテキストを要約して、X向けに150文字で」\n' +
+              '例: 「Instagram / Facebook / X それぞれのトーンで整えて」'
+            }
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+          />
+          <div>
+            <button
+              style={chatLoading ? btnGhost : btn}
+              disabled={chatLoading || !chatInput}
+              onClick={sendChat}
+            >
+              {chatLoading ? '送信中…' : '送信'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gap: 8 }}>
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              style={{
+                border: '1px solid #eee',
+                borderRadius: 10,
+                padding: 12,
+                background: m.role === 'user' ? '#F0F9FF' : '#F9FAFB',
+              }}
+            >
+              <div
+                style={{
+                  fontSize: 12,
+                  color: '#6b7280',
+                  marginBottom: 4,
+                }}
+              >
+                {m.role}
+              </div>
+              <div
+                style={{
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                }}
+              >
+                {m.content}
+              </div>
+              {m.role === 'assistant' && (
+                <div style={{ marginTop: 8 }}>
+                  <button style={btnGhost} onClick={() => copy(m.content)}>
+                    この返信をコピー
+                  </button>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
     </main>
   );
 }
