@@ -25,7 +25,7 @@ function TrialBanner({ profile }: { profile: any }) {
     return (
       <div
         style={{
-          backgroundColor: '#111827', // ダークネイビー
+          backgroundColor: '#111827',
           color: '#bfdbfe',
           padding: '8px 12px',
           borderRadius: 10,
@@ -126,11 +126,11 @@ export default function UPage() {
 
   // ===== 画像 / 動画 → SNS =====
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [videoFile, setVideoFile] = useState<File | null>(null); // 動画ファイル（サムネ生成用）
+  const [videoFile, setVideoFile] = useState<File | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
-  const [imageNote, setImageNote] = useState(''); // 補足説明欄
+  const [imageNote, setImageNote] = useState('');
 
-  // ★ 動画サムネ用の残り回数表示用
+  // 動画サムネ用の残り回数表示用
   const [videoRemaining, setVideoRemaining] = useState<number | null>(null);
   const [videoMaxLimit, setVideoMaxLimit] = useState<number | null>(null);
   const [videoCountLoading, setVideoCountLoading] = useState(false);
@@ -146,22 +146,19 @@ export default function UPage() {
       const { data } = await supabase.auth.getUser();
       const user = data.user;
 
-      // セッションが無ければ /auth へ
       if (!user) {
         router.push('/auth');
         return;
       }
 
-      // userId は今後のAPI呼び出し用に保持
       setUserId(user.id);
 
-      // プロファイル取得（解約情報込み）: auth.uid() = profiles.id で紐づける
       const { data: p, error: profileError } = await supabase
         .from('profiles')
         .select(
           'registered_at, trial_type, plan_status, plan_tier, is_canceled, plan_valid_until',
         )
-        .eq('id', user.id) // ★ ←ここだけ email→id に変更
+        .eq('id', user.id)
         .maybeSingle();
 
       if (profileError) {
@@ -207,7 +204,6 @@ export default function UPage() {
   const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
   const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
 
-  // Trial / Pro だけ動画サムネ機能を使用可
   const canUseVideoThumb =
     planStatus === 'trial' || (planStatus === 'paid' && planTier === 'pro');
 
@@ -216,7 +212,6 @@ export default function UPage() {
     const fetchVideoUsage = async () => {
       if (!userId) return;
 
-      // トライアル：期間中10回 / Pro：月30回
       let max: number | null = null;
       if (planStatus === 'trial') {
         max = 10;
@@ -243,7 +238,7 @@ export default function UPage() {
         if (error) {
           console.error('usage_logs fetch error:', error);
           setVideoMaxLimit(max);
-          setVideoRemaining(max); // エラー時はいったん満額として扱う
+          setVideoRemaining(max);
           return;
         }
 
@@ -367,7 +362,7 @@ export default function UPage() {
     }
   };
 
-  // ===== URL → まとめて生成 =====
+  // ===== URL → まとめて生成（ここだけ access_token 付きに変更） =====
   const generateFromURL = async () => {
     if (!userId) {
       alert('ログインが必要です');
@@ -380,7 +375,6 @@ export default function UPage() {
 
     setUrlLoading(true);
     try {
-      // ★ ここで access_token を取得
       const {
         data: { session },
         error: sessionError,
@@ -399,13 +393,14 @@ export default function UPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${session.access_token}`, // ★ 追加
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          userId, // 既存構成は残す（API側では使わなくてもOK）
           url: urlInput,
+          tone,
+          // 旧構成は残しておく（API側では無視していてもOK）
+          userId,
           promptContext: stancePrompts[stance],
-          tone, // 新APIの tone 用
         }),
       });
 
@@ -414,13 +409,27 @@ export default function UPage() {
         throw new Error(j?.message || j?.error || 'APIエラー');
       }
 
+      // 新しい JSON 形式に合わせて値をセット
       setUrlSummary(j.summary || '');
-      setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
+      setUrlTitles(Array.isArray(j.titleIdeas) ? j.titleIdeas : []);
       setUrlHashtags(Array.isArray(j.hashtags) ? j.hashtags : []);
 
-      setInstaText(j.instagram || '');
-      setFbText(j.facebook || '');
-      setXText(j.x || '');
+      const posts = j.posts || {};
+      setInstaText(
+        Array.isArray(posts.instagram) && posts.instagram.length > 0
+          ? posts.instagram[0]
+          : j.instagram || '',
+      );
+      setFbText(
+        Array.isArray(posts.facebook) && posts.facebook.length > 0
+          ? posts.facebook[0]
+          : j.facebook || '',
+      );
+      setXText(
+        Array.isArray(posts.x) && posts.x.length > 0
+          ? posts.x[0]
+          : j.x || '',
+      );
 
       alert('URLからSNS向け文章を生成しました');
     } catch (e: any) {
@@ -450,7 +459,6 @@ export default function UPage() {
 
         video.onloadedmetadata = () => {
           const duration = video.duration;
-          // 1秒目 or 再生時間の半分あたりを狙う
           let target = 1;
           if (!isNaN(duration) && duration > 0) {
             target = Math.min(1, duration / 2);
@@ -558,8 +566,6 @@ export default function UPage() {
         body: JSON.stringify({
           userId,
           prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
-
-
           filePath: path,
         }),
       });
@@ -615,7 +621,6 @@ export default function UPage() {
       return;
     }
 
-    // Starter / 未契約は利用不可（UIはそのまま、押したときに止めるだけ）
     if (!canUseVideoThumb) {
       if (planStatus === 'paid' && planTier === 'starter') {
         alert(
@@ -629,7 +634,6 @@ export default function UPage() {
       return;
     }
 
-    // 回数上限チェック（Trial=10, Pro=30）
     if (videoMaxLimit !== null && videoRemaining !== null) {
       if (videoRemaining <= 0) {
         alert(
@@ -641,12 +645,9 @@ export default function UPage() {
 
     try {
       setIsGenerating(true);
-      // まず動画からサムネ画像を作る
       const thumb = await extractThumbnailFromVideo(videoFile);
-      // そのサムネ画像を使って、画像と同じフローで生成
       await runImageGeneration(thumb);
 
-      // 生成に成功したら usage_logs に video_thumb を1件記録し、残り回数を1減らす
       if (canUseVideoThumb) {
         try {
           await supabase.from('usage_logs').insert({
@@ -656,7 +657,7 @@ export default function UPage() {
             prompt_tokens: 0,
             completion_tokens: 0,
             total_tokens: 0,
-            cost: 20, // 仮のコスト（円）
+            cost: 20,
           });
 
           setVideoRemaining((prev) =>
@@ -704,7 +705,7 @@ export default function UPage() {
       {/* 🔔 トライアル / ご契約中バナー */}
       <TrialBanner profile={profile} />
 
-      {/* ヘッダー：左にタイトル、右にマイページ＆ログアウト */}
+      {/* ヘッダー */}
       <div
         style={{
           display: 'flex',
@@ -740,7 +741,7 @@ export default function UPage() {
         </div>
       </div>
 
-      {/* ===== ① URL → 生成（上段） ===== */}
+      {/* ===== ① URL → 生成 ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
         <h3
           style={{
@@ -919,7 +920,7 @@ export default function UPage() {
                     <span
                       key={i}
                       style={{
-                        border: '1px solid '#eee'",
+                        border: '1px solid #eee',
                         borderRadius: 999,
                         padding: '6px 10px',
                         background: '#fff',
@@ -943,7 +944,7 @@ export default function UPage() {
         ) : null}
       </div>
 
-      {/* ===== ② 画像 / 動画 → 生成（中段） ===== */}
+      {/* ===== ② 画像 / 動画 → 生成 ===== */}
       <div style={{ ...panel, marginBottom: 16 }}>
         <h3
           style={{
@@ -1169,7 +1170,7 @@ export default function UPage() {
         </div>
       </div>
 
-      {/* ===== ③ 通常チャット（下段） ===== */}
+      {/* ===== ③ 通常チャット ===== */}
       <div style={{ ...panel }}>
         <h3
           style={{
