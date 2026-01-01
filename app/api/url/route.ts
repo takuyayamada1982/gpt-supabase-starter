@@ -1,8 +1,8 @@
 // app/api/url/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { getUserFromCookies } from '../_shared/auth';
 import OpenAI from 'openai';
 
+import { getUserFromRequest } from '../_shared/auth';
 import { supabase as adminSupabase } from '../_shared/profile';
 import { checkPlanGuardByUserId } from '../_shared/planGuard';
 
@@ -12,17 +12,17 @@ const openai = new OpenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    // ① Cookie からユーザー取得
-    const { user, error } = await getUserFromCookies();
+    // ① Authorization ヘッダからユーザー取得
+    const { user, error: userError } = await getUserFromRequest(req);
 
-    if (error || !user) {
+    if (userError || !user) {
       return NextResponse.json(
         { error: 'not_auth', message: 'ログイン情報が見つかりません。' },
         { status: 401 }
       );
     }
 
-    // ② プランガード
+    // ② プランガード（トライアル / 有料チェック）
     const guard = await checkPlanGuardByUserId(user.id);
 
     if (!guard.allowed) {
@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ④ URL fetch
+    // ④ URL 先の本文を取得
     const res = await fetch(url);
     if (!res.ok) {
       return NextResponse.json(
@@ -77,7 +77,7 @@ export async function POST(req: NextRequest) {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 8000);
+      .slice(0, 8000); // トークン削減
 
     const toneText =
       tone === 'self'
@@ -92,13 +92,25 @@ export async function POST(req: NextRequest) {
 
 - summary: 200〜300文字の要約
 - summary_copy: summaryを元にした「コピペ用の要約文」
-- titleIdeas: 投稿タイトル案を3つ
-- hashtags: ハッシュタグ候補を10〜15個
-- posts.instagram: Instagram向けの投稿文案を3パターン
-- posts.facebook: Facebook向けの投稿文案を3パターン
-- posts.x: X向けの投稿文案を3パターン
+- titleIdeas: 投稿タイトル案を3つ（スッキリした短めのタイトル）
+- hashtags: ハッシュタグ候補を10〜15個（日本語と英語を混ぜても良い）
+- posts.instagram: Instagram向けの投稿文案を3パターン（改行込み）
+- posts.facebook: Facebook向けの投稿文案を3パターン（ビジネス寄りでもOK）
+- posts.x: X(旧Twitter)向けの投稿文案を3パターン（140文字前後）
 
-出力は JSON のみで返してください。
+出力は必ず JSON のみで、以下の型に完全に従ってください：
+
+{
+  "summary": string,
+  "summary_copy": string,
+  "titleIdeas": string[],
+  "hashtags": string[],
+  "posts": {
+    "instagram": string[],
+    "facebook": string[],
+    "x": string[]
+  }
+}
 
 口調や視点は「${toneText}」を想定してください。
 
@@ -112,6 +124,7 @@ ${text}
       input: prompt,
     });
 
+    // OpenAI レスポンスから生テキストを取得（型エラー回避のため any）
     const outputItem = (response as any).output?.[0] as any;
     const raw: string = outputItem?.content?.[0]?.text ?? '';
 
@@ -119,17 +132,19 @@ ${text}
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
+      console.error('Failed to parse OpenAI JSON:', e, raw);
       return NextResponse.json(
         { error: 'parse_error', message: 'AIレスポンスの解析に失敗しました。' },
         { status: 500 }
       );
     }
 
+    // ⑥ usage_logs へ記録
     const totalTokens =
       (response.usage?.input_tokens ?? 0) +
       (response.usage?.output_tokens ?? 0);
 
-    const cost = totalTokens * 0.002;
+    const cost = totalTokens * 0.002; // 原価はあとで調整
 
     await adminSupabase.from('usage_logs').insert({
       user_id: guard.profile.id,
@@ -141,6 +156,7 @@ ${text}
       cost,
     });
 
+    // ⑦ フロントへ返却
     return NextResponse.json(parsed, { status: 200 });
   } catch (e) {
     console.error('API /api/url error:', e);
