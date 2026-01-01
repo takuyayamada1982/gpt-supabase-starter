@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+import { checkPlanGuardByUserId } from '../_shared/planGuard'; // ★追加
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -32,16 +33,42 @@ function getMonthRange() {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const userId = body.userId as string | undefined;      // ★ Supabase Auth の UUID
+    const userId = body.userId as string | undefined; // ★ Supabase Auth の UUID
     const userEmail = body.userEmail as string | undefined;
     const prompt = body.prompt as string | undefined;
     const filePath = body.filePath as string | undefined;
     const mode: VisionMode =
       body.mode === 'video_thumb' ? 'video_thumb' : 'image';
 
+    // 0) 認証チェック
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
+
+    // 0-2) プランガード（URL/Chat と同じ制御）
+    const guard = await checkPlanGuardByUserId(userId);
+
+    if (!guard.allowed) {
+      if (guard.reason === 'trial_expired') {
+        return NextResponse.json(
+          {
+            error: 'TRIAL_EXPIRED',
+            message:
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          },
+          { status: 403 }
+        );
+      }
+
+      return NextResponse.json(
+        {
+          error: guard.reason ?? 'forbidden',
+          message: '利用権限がありません。',
+        },
+        { status: 403 }
+      );
+    }
+
     if (!prompt) {
       return NextResponse.json({ error: 'prompt required' }, { status: 400 });
     }
@@ -88,8 +115,16 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
-    const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
+    const planStatus = profile?.plan_status as
+      | 'trial'
+      | 'paid'
+      | null
+      | undefined;
+    const planTier = profile?.plan_tier as
+      | 'starter'
+      | 'pro'
+      | null
+      | undefined;
 
     // 2) 動画サムネ利用時のみ、プランチェック & 回数制限
     //    ★ 回数は usage_logs.user_id（= Supabase Auth UUID）ごとに集計する。
@@ -245,7 +280,7 @@ export async function POST(req: NextRequest) {
 
     try {
       await supabase.from('usage_logs').insert({
-        user_id: userId,                    // ★ Supabase Auth UUID 単位で記録
+        user_id: userId, // ★ Supabase Auth UUID 単位で記録
         model: ai.model ?? 'gpt-4.1-mini',
         type: typeForLog,
         prompt_tokens: usage?.prompt_tokens ?? 0,
