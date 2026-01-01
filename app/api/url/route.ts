@@ -1,6 +1,6 @@
 // app/api/url/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
+import { getUserFromCookies } from '../_shared/auth';
 import OpenAI from 'openai';
 
 import { supabase as adminSupabase } from '../_shared/profile';
@@ -10,92 +10,19 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
 });
 
-// ----------------------------------------------------
-// Supabase 認証クッキーまわり
-// ----------------------------------------------------
-
-type GetUserResult =
-  | { user: null; error: 'no_token' | 'auth_error' }
-  | { user: any; error: null };
-
-/**
- * Supabase の auth cookie 名を推測する
- * 例: NEXT_PUBLIC_SUPABASE_URL = https://abc123.supabase.co
- * → sb-abc123-auth-token
- */
-function getSupabaseAuthCookieName(): string | null {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url) return null;
-
-  try {
-    const hostname = new URL(url).hostname; // abc123.supabase.co
-    const projectRef = hostname.split('.')[0];
-    return `sb-${projectRef}-auth-token`;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Cookie から access_token を取り出してユーザーを取得
- * sb-<projectRef>-auth-token 形式と sb-access-token の両方をサポート
- */
-async function getUserFromCookies(): Promise<GetUserResult> {
-  const cookieStore = cookies();
-
-  let accessToken: string | null = null;
-
-  // 1) 新形式: sb-<projectRef>-auth-token （中身は JSON 文字列）
-  const authCookieName = getSupabaseAuthCookieName();
-  if (authCookieName) {
-    const authCookie = cookieStore.get(authCookieName)?.value;
-    if (authCookie) {
-      try {
-        const parsed = JSON.parse(authCookie);
-        if (parsed?.access_token && typeof parsed.access_token === 'string') {
-          accessToken = parsed.access_token;
-        }
-      } catch {
-        // JSON でなければ無視
-      }
-    }
-  }
-
-  // 2) 旧形式: sb-access-token （トークン文字列そのもの）
-  if (!accessToken) {
-    accessToken = cookieStore.get('sb-access-token')?.value ?? null;
-  }
-
-  if (!accessToken) {
-    return { user: null, error: 'no_token' };
-  }
-
-  const { data, error } = await adminSupabase.auth.getUser(accessToken);
-
-  if (error || !data.user) {
-    return { user: null, error: 'auth_error' };
-  }
-
-  return { user: data.user, error: null };
-}
-
-// ----------------------------------------------------
-// メインハンドラ
-// ----------------------------------------------------
-
 export async function POST(req: NextRequest) {
   try {
     // ① Cookie からユーザー取得
-    const { user, error: userError } = await getUserFromCookies();
+    const { user, error } = await getUserFromCookies();
 
-    if (userError || !user) {
+    if (error || !user) {
       return NextResponse.json(
         { error: 'not_auth', message: 'ログイン情報が見つかりません。' },
         { status: 401 }
       );
     }
 
-    // ② プランガード（トライアル / 有料チェック）
+    // ② プランガード
     const guard = await checkPlanGuardByUserId(user.id);
 
     if (!guard.allowed) {
@@ -134,7 +61,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ④ URL 先の本文を取得
+    // ④ URL fetch
     const res = await fetch(url);
     if (!res.ok) {
       return NextResponse.json(
@@ -150,7 +77,7 @@ export async function POST(req: NextRequest) {
       .replace(/<[^>]+>/g, ' ')
       .replace(/\s+/g, ' ')
       .trim()
-      .slice(0, 8000); // トークン削減
+      .slice(0, 8000);
 
     const toneText =
       tone === 'self'
@@ -159,32 +86,19 @@ export async function POST(req: NextRequest) {
         ? '第三者が他人の記事を紹介する目線'
         : '中立的な第三者目線';
 
-    // ⑤ OpenAI へのプロンプト
     const prompt = `
 あなたはSNSマーケティング担当者です。
 以下のWebページ本文を読み、次のフォーマットで日本語のSNS投稿用テキストを作成してください。
 
 - summary: 200〜300文字の要約
 - summary_copy: summaryを元にした「コピペ用の要約文」
-- titleIdeas: 投稿タイトル案を3つ（スッキリした短めのタイトル）
-- hashtags: ハッシュタグ候補を10〜15個（日本語と英語を混ぜても良い）
-- posts.instagram: Instagram向けの投稿文案を3パターン（改行込み）
-- posts.facebook: Facebook向けの投稿文案を3パターン（ビジネス寄りでもOK）
-- posts.x: X(旧Twitter)向けの投稿文案を3パターン（140文字前後）
+- titleIdeas: 投稿タイトル案を3つ
+- hashtags: ハッシュタグ候補を10〜15個
+- posts.instagram: Instagram向けの投稿文案を3パターン
+- posts.facebook: Facebook向けの投稿文案を3パターン
+- posts.x: X向けの投稿文案を3パターン
 
-出力は必ず JSON のみで、以下の型に完全に従ってください：
-
-{
-  "summary": string,
-  "summary_copy": string,
-  "titleIdeas": string[],
-  "hashtags": string[],
-  "posts": {
-    "instagram": string[],
-    "facebook": string[],
-    "x": string[]
-  }
-}
+出力は JSON のみで返してください。
 
 口調や視点は「${toneText}」を想定してください。
 
@@ -198,7 +112,6 @@ ${text}
       input: prompt,
     });
 
-    // OpenAI レスポンスからテキストを取り出し
     const outputItem = (response as any).output?.[0] as any;
     const raw: string = outputItem?.content?.[0]?.text ?? '';
 
@@ -206,19 +119,17 @@ ${text}
     try {
       parsed = JSON.parse(raw);
     } catch (e) {
-      console.error('Failed to parse OpenAI JSON:', e, raw);
       return NextResponse.json(
         { error: 'parse_error', message: 'AIレスポンスの解析に失敗しました。' },
         { status: 500 }
       );
     }
 
-    // ⑥ usage_logs へ記録
     const totalTokens =
       (response.usage?.input_tokens ?? 0) +
       (response.usage?.output_tokens ?? 0);
 
-    const cost = totalTokens * 0.002; // 原価はあとで調整
+    const cost = totalTokens * 0.002;
 
     await adminSupabase.from('usage_logs').insert({
       user_id: guard.profile.id,
@@ -230,7 +141,6 @@ ${text}
       cost,
     });
 
-    // ⑦ フロントへ返却
     return NextResponse.json(parsed, { status: 200 });
   } catch (e) {
     console.error('API /api/url error:', e);
