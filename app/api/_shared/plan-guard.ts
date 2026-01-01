@@ -1,93 +1,138 @@
-// app/api/_shared/plan-guard.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+// app/api/_shared/planGuard.ts
+import { Database } from '@/types/supabase'; // 既に型定義があればそれを利用（無ければ any でOK）
+import { supabase } from './profile'; // すでにある _shared/profile.ts から再利用想定
 
-// profiles テーブル側の型（必要な列だけ）
-type ProfileRow = {
-  id: string;
-  plan_status: 'trial' | 'paid' | null;
-  plan_valid_until: string | null;
-  is_cancel?: boolean | null;
-};
+// profiles テーブルの型（型が無ければ適宜修正 or `any` で代用）
+type ProfileRow = Database['public']['Tables']['profiles']['Row'];
 
-type GuardOkResult = {
-  supabase: ReturnType<typeof createRouteHandlerClient>;
-  user: { id: string; email?: string | null };
-  profile: ProfileRow;
-};
+export type PlanGuardResult =
+  | {
+      allowed: true;
+      reason: null;
+      profile: ProfileRow;
+      isTrial: boolean;
+      daysLeft: number | 0;
+    }
+  | {
+      allowed: false;
+      reason: 'not_logged_in' | 'profile_not_found' | 'trial_expired';
+      profile?: ProfileRow;
+      isTrial?: boolean;
+      daysLeft?: number | 0;
+    };
 
-/**
- * 利用可能なプランかどうかをチェックする共通ガード
- * - ログインしていない → 401
- * - プロフィールが無い → 400
- * - plan_valid_until が現在時刻より前 → 402（期限切れ）
- * - is_cancel が true なら期限内でも 402 にしておく（任意）
- */
-export async function guardActivePlan(
-  req: NextRequest
-): Promise<GuardOkResult | NextResponse> {
-  const supabase = createRouteHandlerClient({ cookies });
+// トライアル終了日と残日数を計算
+function calcTrialInfo(profile: ProfileRow) {
+  const registeredAt = profile.registered_at
+    ? new Date(profile.registered_at)
+    : null;
 
-  // ① ログインユーザー取得
-  const {
-    data: { user },
-    error: userError,
-  } = await supabase.auth.getUser();
-
-  if (userError || !user) {
-    return NextResponse.json(
-      {
-        error: 'not_signed_in',
-        message: 'ログインが必要です。サインインし直してください。',
-      },
-      { status: 401 }
-    );
+  if (!registeredAt) {
+    return {
+      isTrial: false,
+      trialEnd: null as Date | null,
+      daysLeft: 0,
+    };
   }
 
-  // ② profiles からプラン情報取得
-  const { data: profile, error: profileError } = await supabase
-    .from('profiles')
-    .select('id, plan_status, plan_valid_until, is_cancel')
-    .eq('id', user.id)
-    .maybeSingle<ProfileRow>();
+  const trialType = profile.trial_type === 'referral' ? 'referral' : 'normal';
+  const trialDays = trialType === 'referral' ? 30 : 7;
 
-  if (profileError || !profile) {
-    console.error('guardActivePlan profile error:', profileError);
-    return NextResponse.json(
-      {
-        error: 'profile_not_found',
-        message: 'プロフィール情報が取得できませんでした。',
-      },
-      { status: 400 }
-    );
-  }
+  const trialEnd = new Date(registeredAt);
+  trialEnd.setDate(trialEnd.getDate() + trialDays);
 
-  // ③ 期限チェック（plan_valid_until が過去なら NG）
-  const now = Date.now();
-  const validUntil = profile.plan_valid_until
-    ? new Date(profile.plan_valid_until).getTime()
-    : 0;
+  const now = new Date();
+  const diffMs = trialEnd.getTime() - now.getTime();
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
 
-  const isExpired = !validUntil || validUntil < now;
-  const isCanceled = profile.is_cancel === true;
-
-  if (isExpired || isCanceled) {
-    return NextResponse.json(
-      {
-        error: 'plan_expired',
-        message:
-          '無料期間または契約期間が終了しています。\n' +
-          'マイページの「プラン変更」からご契約ください。',
-      },
-      { status: 402 } // Payment Required 的な扱い
-    );
-  }
-
-  // ④ OK の場合は、呼び出し元でそのまま使えるように返す
   return {
-    supabase,
-    user: { id: user.id, email: user.email },
+    isTrial: true,
+    trialEnd,
+    daysLeft: diffDays,
+  };
+}
+
+// プランの有効性を判定するメイン関数
+export async function checkPlanGuardByUserId(userId?: string | null): Promise<PlanGuardResult> {
+  if (!userId) {
+    return {
+      allowed: false,
+      reason: 'not_logged_in',
+    };
+  }
+
+  const { data: profile, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .is('deleted_at', null)
+    .single();
+
+  if (error || !profile) {
+    return {
+      allowed: false,
+      reason: 'profile_not_found',
+    };
+  }
+
+  // 1. 有料プラン中なら OK
+  if (profile.plan_status === 'paid') {
+    // plan_valid_until がある場合は期限も見る
+    if (profile.plan_valid_until) {
+      const now = new Date();
+      const validUntil = new Date(profile.plan_valid_until);
+      if (validUntil.getTime() < now.getTime()) {
+        // 有料期限切れ → トライアル扱いでもないので NG
+        return {
+          allowed: false,
+          reason: 'trial_expired',
+          profile,
+          isTrial: false,
+          daysLeft: 0,
+        };
+      }
+    }
+
+    return {
+      allowed: true,
+      reason: null,
+      profile,
+      isTrial: false,
+      daysLeft: 0,
+    };
+  }
+
+  // 2. 無料トライアル中かどうか
+  const { isTrial, trialEnd, daysLeft } = calcTrialInfo(profile);
+
+  if (!isTrial || !trialEnd) {
+    // トライアル情報が無い or registered_at 無し → 期限切れ扱い
+    return {
+      allowed: false,
+      reason: 'trial_expired',
+      profile,
+      isTrial: false,
+      daysLeft: 0,
+    };
+  }
+
+  // まだトライアル期間内ならOK（daysLeft が 0 以上なら当日までOK、マイナスなら終了）
+  if (daysLeft >= 0) {
+    return {
+      allowed: true,
+      reason: null,
+      profile,
+      isTrial: true,
+      daysLeft,
+    };
+  }
+
+  // トライアル終了
+  return {
+    allowed: false,
+    reason: 'trial_expired',
     profile,
+    isTrial: true,
+    daysLeft,
   };
 }
