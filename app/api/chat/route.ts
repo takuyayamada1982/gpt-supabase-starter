@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
+import { checkPlanGuardByUserId } from '../_shared/planGuard';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -12,31 +13,11 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-/**
- * トライアルが有効かどうか判定するヘルパー
- * 有効: true / 期限切れ: false
- */
-function isTrialActive(profile: any): boolean {
-  if (!profile?.registered_at) return false;
-
-  const registered = new Date(profile.registered_at);
-  const today = new Date();
-  const diffDays = Math.floor(
-    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  const trialDays =
-    profile?.trial_type === 'referral'
-      ? 30 // 紹介トライアル
-      : 7;  // 通常トライアル
-
-  return diffDays < trialDays;
-}
-
 export async function POST(req: NextRequest) {
   try {
     const { userId, userText } = await req.json();
 
+    // 0) 認証チェック
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
@@ -47,40 +28,31 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ① プロファイル取得（プラン & トライアル情報）
-    const { data: profile, error: profileErr } = await supabase
-      .from('profiles')
-      .select('plan_status, trial_type, registered_at')
-      .eq('id', userId) // Auth の UUID = profiles.id
-      .maybeSingle();
+    // 0-1) プランガード（URL / 画像 / 動画 と同じロジック）
+    const guard = await checkPlanGuardByUserId(userId);
 
-    if (profileErr) {
-      console.error('profile error (chat):', profileErr);
+    if (!guard.allowed) {
+      if (guard.reason === 'trial_expired') {
+        return NextResponse.json(
+          {
+            error: 'TRIAL_EXPIRED',
+            message:
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
         {
-          error: 'profile_error',
-          message: 'プロフィールの取得に失敗しました。',
-        },
-        { status: 500 }
-      );
-    }
-
-    const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
-
-    // ② トライアル終了 & 未課金ならロック
-    // plan_status !== 'paid' かつ Trial が有効でない場合 → ロック
-    if (planStatus !== 'paid' && !isTrialActive(profile)) {
-      return NextResponse.json(
-        {
-          error: 'TRIAL_EXPIRED',
-          message:
-            '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          error: guard.reason ?? 'forbidden',
+          message: '利用権限がありません。',
         },
         { status: 403 }
       );
     }
 
-    // ③ OpenAI で回答生成
+    // 1) OpenAI で回答生成
     const instructions =
       'あなたはSNS運用アシスタントです。与えられた文章の要約、SNS向けリライト、投稿案作成などを日本語で手伝います。';
 
@@ -97,7 +69,7 @@ export async function POST(req: NextRequest) {
       temperature: 0.7,
     });
 
-    // ④ usage ログ（type = 'chat'）
+    // 2) usage ログ（type = "chat"）
     const usage: any = (ai as any).usage;
     if (usage) {
       const totalTokens = usage.total_tokens ?? 0;
@@ -105,9 +77,9 @@ export async function POST(req: NextRequest) {
 
       try {
         await supabase.from('usage_logs').insert({
-          user_id: userId,
+          user_id: guard.profile.id,            // ★ profiles.id = Auth UUID
           model: (ai as any).model ?? 'gpt-4.1-mini',
-          type: 'chat', // ★ここ重要：チャット利用
+          type: 'chat',
           prompt_tokens: usage.prompt_tokens ?? 0,
           completion_tokens: usage.completion_tokens ?? 0,
           total_tokens: totalTokens,
@@ -121,7 +93,7 @@ export async function POST(req: NextRequest) {
 
     const text = (ai as any).output_text ?? '';
 
-    return NextResponse.json({ text });
+    return NextResponse.json({ text }, { status: 200 });
   } catch (e: any) {
     console.error('API /api/chat error', e);
     return NextResponse.json(
