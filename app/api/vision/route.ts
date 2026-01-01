@@ -2,7 +2,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { createClient } from '@supabase/supabase-js';
-import { checkPlanGuardByUserId } from '../_shared/planGuard'; // ★ここ追加
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY!,
@@ -30,50 +29,46 @@ function getMonthRange() {
   return { start, end };
 }
 
+/**
+ * トライアルが有効かどうか判定
+ * 有効: true / 期限切れ: false
+ */
+function isTrialActive(profile: any): boolean {
+  if (!profile?.registered_at) return false;
+
+  const registered = new Date(profile.registered_at);
+  const today = new Date();
+  const diffDays = Math.floor(
+    (today.getTime() - registered.getTime()) / (1000 * 60 * 60 * 24)
+  );
+
+  const trialDays =
+    profile?.trial_type === 'referral'
+      ? 30 // 紹介トライアル
+      : 7;  // 通常トライアル
+
+  return diffDays < trialDays;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const userId = body.userId as string | undefined; // Supabase Auth の UUID
+    const userId = body.userId as string | undefined;      // Supabase Auth の UUID
     const userEmail = body.userEmail as string | undefined;
     const prompt = body.prompt as string | undefined;
     const filePath = body.filePath as string | undefined;
     const mode: VisionMode =
       body.mode === 'video_thumb' ? 'video_thumb' : 'image';
 
-    // 0) 認証 & プランガード（URL/Chat と同じ）
     if (!userId) {
       return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
     }
-
-    const guard = await checkPlanGuardByUserId(userId);
-
-    if (!guard.allowed) {
-      if (guard.reason === 'trial_expired') {
-        return NextResponse.json(
-          {
-            error: 'TRIAL_EXPIRED',
-            message:
-              '無料トライアルは終了しました。マイページからプランをご購入ください。',
-          },
-          { status: 403 }
-        );
-      }
-
-      return NextResponse.json(
-        {
-          error: guard.reason ?? 'forbidden',
-          message: '利用権限がありません。',
-        },
-        { status: 403 }
-      );
-    }
-
     if (!prompt) {
-      return NextResponse.json({ error: 'prompt required' }, { status: 400 });
+      return NextResponse.json({ error: 'prompt_required', message: 'プロンプトが指定されていません。' }, { status: 400 });
     }
     if (!filePath || typeof filePath !== 'string') {
       return NextResponse.json(
-        { error: 'filePath required' },
+        { error: 'filePath_required', message: '画像ファイルの場所が指定されていません。' },
         { status: 400 }
       );
     }
@@ -85,7 +80,7 @@ export async function POST(req: NextRequest) {
     if (userEmail) {
       const { data, error } = await supabase
         .from('profiles')
-        .select('plan_status, plan_tier, registered_at')
+        .select('plan_status, plan_tier, registered_at, trial_type')
         .eq('email', userEmail)
         .maybeSingle();
       profile = data;
@@ -93,7 +88,7 @@ export async function POST(req: NextRequest) {
     } else {
       const { data, error } = await supabase
         .from('profiles')
-        .select('plan_status, plan_tier, registered_at')
+        .select('plan_status, plan_tier, registered_at, trial_type')
         .eq('id', userId)
         .maybeSingle();
       profile = data;
@@ -111,18 +106,23 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const planStatus = profile?.plan_status as
-      | 'trial'
-      | 'paid'
-      | null
-      | undefined;
-    const planTier = profile?.plan_tier as
-      | 'starter'
-      | 'pro'
-      | null
-      | undefined;
+    const planStatus = profile?.plan_status as 'trial' | 'paid' | null | undefined;
+    const planTier = profile?.plan_tier as 'starter' | 'pro' | null | undefined;
 
-    // 2) 動画サムネ利用時のみ、プランチェック & 回数制限
+    // 2) トライアル終了ロック（chat と同じ考え方）
+    //    plan_status !== 'paid' かつ Trial が有効でない場合 → ロック
+    if (planStatus !== 'paid' && !isTrialActive(profile)) {
+      return NextResponse.json(
+        {
+          error: 'TRIAL_EXPIRED',
+          message:
+            '無料トライアルは終了しました。マイページからプランをご購入ください。',
+        },
+        { status: 403 }
+      );
+    }
+
+    // 3) 動画サムネ利用時のみ、プランチェック & 回数制限
     if (mode === 'video_thumb') {
       const canUseVideo =
         planStatus === 'trial' ||
@@ -160,9 +160,7 @@ export async function POST(req: NextRequest) {
         const reg = profile?.registered_at
           ? new Date(profile.registered_at)
           : null;
-        usedFrom = reg
-          ? reg.toISOString()
-          : new Date(2000, 0, 1).toISOString();
+        usedFrom = reg ? reg.toISOString() : new Date(2000, 0, 1).toISOString();
         usedTo = new Date().toISOString();
       } else if (planStatus === 'paid' && planTier === 'pro') {
         maxVideoCount = 30;
@@ -211,13 +209,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3) Supabase Storage 上の画像の public URL を取得
-    const { data: publicUrlData } = supabase.storage
+    // 4) Supabase Storage 上の画像の signed URL を取得
+    //    ※ public / private どちらでも動くように createSignedUrl を使用
+    const { data: signed, error: signedErr } = await supabase.storage
       .from('uploads')
-      .getPublicUrl(filePath);
+      .createSignedUrl(filePath, 300); // 5分有効
 
-    const imageUrl = publicUrlData?.publicUrl;
-    if (!imageUrl) {
+    if (signedErr || !signed?.signedUrl) {
+      console.error('signedUrl error:', signedErr);
       return NextResponse.json(
         {
           error: 'no_public_url',
@@ -227,7 +226,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // 4) OpenAI に投げるコンテンツを準備
+    const imageUrl = signed.signedUrl;
+
+    // 5) OpenAI に投げるコンテンツを準備
     const extraNoteForVideo =
       mode === 'video_thumb'
         ? '（この画像は動画から切り出した1枚のサムネイルです。動画全体の雰囲気やストーリーが伝わるように文章を整えてください。）'
@@ -252,29 +253,56 @@ export async function POST(req: NextRequest) {
       },
     ];
 
-    // 5) OpenAI Responses API で生成
-    const ai: any = await (openai as any).responses.create({
-      model: 'gpt-4.1-mini',
-      input: [
+    // 6) OpenAI Responses API で生成
+    let ai: any;
+    try {
+      ai = await (openai as any).responses.create({
+        model: 'gpt-4.1-mini',
+        input: [
+          {
+            role: 'user',
+            content: userContent,
+          },
+        ],
+        max_output_tokens: 1200,
+        temperature: 0.7,
+      });
+    } catch (err: any) {
+      console.error('OpenAI vision error:', err);
+
+      // Supabase 画像URLのダウンロード失敗時のエラーを日本語に変換
+      const msg: string = err?.message || '';
+      if (msg.includes('Error while downloading')) {
+        return NextResponse.json(
+          {
+            error: 'IMAGE_DOWNLOAD_FAILED',
+            message:
+              '画像ファイルの取得に失敗しました。少し時間をおいてから、もう一度アップロードしてお試しください。',
+          },
+          { status: 400 }
+        );
+      }
+
+      return NextResponse.json(
         {
-          role: 'user',
-          content: userContent,
+          error: 'openai_error',
+          message:
+            '画像をもとにした文章生成でエラーが発生しました。時間をおいて再度お試しください。',
         },
-      ],
-      max_output_tokens: 1200,
-      temperature: 0.7,
-    });
+        { status: 500 }
+      );
+    }
 
     const usage = ai.usage;
     const text: string = ai.output_text ?? '';
 
-    // 6) usage_logs に記録
+    // 7) usage_logs に記録
     const typeForLog = mode === 'video_thumb' ? 'video' : 'vision';
     const costForLog = mode === 'video_thumb' ? VIDEO_COST_YEN : IMAGE_COST_YEN;
 
     try {
       await supabase.from('usage_logs').insert({
-        user_id: userId, // Supabase Auth UUID
+        user_id: userId,
         model: ai.model ?? 'gpt-4.1-mini',
         type: typeForLog,
         prompt_tokens: usage?.prompt_tokens ?? 0,
@@ -287,7 +315,7 @@ export async function POST(req: NextRequest) {
       // ログ保存失敗は致命的ではないので継続
     }
 
-    // 7) 画像ファイルは生成後に削除
+    // 8) 画像ファイルは生成後に削除
     try {
       const { error: delError } = await supabase.storage
         .from('uploads')
@@ -299,7 +327,7 @@ export async function POST(req: NextRequest) {
       console.error('exception on delete image file:', delEx);
     }
 
-    // 8) 動画モードのときだけ、残り回数も返却（再カウント）
+    // 9) 動画モードのときだけ、残り回数も返却（再カウント）
     if (mode === 'video_thumb') {
       let maxVideoCount = 0;
       let usedFrom = '';
@@ -310,9 +338,7 @@ export async function POST(req: NextRequest) {
         const reg = profile?.registered_at
           ? new Date(profile.registered_at)
           : null;
-        usedFrom = reg
-          ? reg.toISOString()
-          : new Date(2000, 0, 1).toISOString();
+        usedFrom = reg ? reg.toISOString() : new Date(2000, 0, 1).toISOString();
         usedTo = new Date().toISOString();
       } else if (planStatus === 'paid' && planTier === 'pro') {
         maxVideoCount = 30;
