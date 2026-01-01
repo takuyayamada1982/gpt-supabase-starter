@@ -12,10 +12,10 @@ const openai = new OpenAI({
 
 export async function POST(req: NextRequest) {
   try {
-    // ① Cookie から Supabase ユーザーを取得
-    const accessToken = cookies().get('sb-access-token')?.value;
+    // ① Cookie からログインユーザー取得
+    const access_token = cookies().get('sb-access-token')?.value;
 
-    if (!accessToken) {
+    if (!access_token) {
       return NextResponse.json(
         { error: 'not_auth', message: 'ログイン情報が見つかりません。' },
         { status: 401 }
@@ -25,7 +25,7 @@ export async function POST(req: NextRequest) {
     const {
       data: { user },
       error: userError,
-    } = await supabase.auth.getUser(accessToken);
+    } = await supabase.auth.getUser(access_token);
 
     if (userError || !user) {
       return NextResponse.json(
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ② プランガード（トライアル／有料チェック）
+    // ② プランガード（トライアル/有料チェック）
     const guard = await checkPlanGuardByUserId(user.id);
 
     if (!guard.allowed) {
@@ -49,24 +49,21 @@ export async function POST(req: NextRequest) {
         );
       }
 
+      // profile_not_found / not_logged_in など
       return NextResponse.json(
-        {
-          error: guard.reason ?? 'forbidden',
-          message: '利用権限がありません。',
-        },
+        { error: guard.reason ?? 'forbidden', message: '利用権限がありません。' },
         { status: 403 }
       );
     }
 
-    // ③ リクエストボディを取得（必要な項目があれば追加）
+    // ③ ここから先が「今まで通りの URL 要約処理」
     const body = (await req.json()) as {
       url: string;
       tone?: string;
-      persona?: string;
-      // 他にも使っているパラメータがあればここに追加
+      // 他にあれば追加
     };
 
-    const { url } = body;
+    const { url, tone } = body;
 
     if (!url) {
       return NextResponse.json(
@@ -75,42 +72,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // ④ ここに「今までの URL 要約ロジック」を入れる
-    //    いったんシンプルなダミー実装を入れておきます。
-    //    すでに動いていたロジックがある場合は、
-    //    このブロックを差し替えてください。
+    // TODO: ここに既存の OpenAI 呼び出しロジックを戻す
+    // const summary = await openai.responses.create({ ... });
+    // await supabase.from('usage_logs').insert({ ... });
 
-    const prompt = `次のURLの内容をSNS向けに要約してください: ${url}`;
-
-    const aiRes = await openai.responses.create({
-      model: 'gpt-4.1-mini',
-      input: prompt,
-    });
-
-    const outputText =
-      (aiRes.output[0].content[0] as any).text ?? '要約結果を取得できませんでした。';
-
-    // ⑤ usage_logs に記録（必要に応じてカラム名を調整）
-    try {
-      await supabase.from('usage_logs').insert({
-        user_id: guard.profile.id,
-        type: 'url',
-        model: 'gpt-4.1-mini',
-        // prompt_tokens / completion_tokens / total_tokens / cost など
-        // トークン情報を取っている場合はここに追加
-      });
-    } catch (logErr) {
-      console.error('usage_logs insert error:', logErr);
-      // ログ記録に失敗しても、ユーザーには結果を返す
-    }
-
-    // ⑥ フロントに返すレスポンス
     return NextResponse.json(
       {
-        text: outputText,
-        // すでに使っているキー（summary, posts など）があればここに追加
-        // summary,
-        // posts,
+        // summary: ...,
       },
       { status: 200 }
     );
