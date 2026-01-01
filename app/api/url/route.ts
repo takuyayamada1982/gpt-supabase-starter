@@ -40,21 +40,37 @@ export async function POST(req: NextRequest) {
     }
 
     //
-    // ③ プランガード
+    // ③ プランガード（トライアル or 有料チェック）
     //
     const guard = await checkPlanGuardByUserId(user.id);
 
     if (!guard.allowed) {
+      if (guard.reason === 'trial_expired') {
+        return NextResponse.json(
+          {
+            error: 'TRIAL_EXPIRED',
+            message:
+              '無料トライアルは終了しました。マイページからプランをご購入ください。',
+          },
+          { status: 403 }
+        );
+      }
+
       return NextResponse.json(
-        { error: guard.reason ?? 'forbidden' },
+        { error: guard.reason ?? 'forbidden', message: '利用権限がありません。' },
         { status: 403 }
       );
     }
 
     //
-    // ④ リクエスト内容取得
+    // ④ リクエストボディ取得
     //
-    const { url } = await req.json();
+    const body = (await req.json()) as {
+      url: string;
+      tone?: string;
+    };
+
+    const { url } = body;
 
     if (!url) {
       return NextResponse.json(
@@ -64,41 +80,65 @@ export async function POST(req: NextRequest) {
     }
 
     //
-    // ⑤ OpenAI 要約
+    // ⑤ OpenAI で要約生成
     //
     const response = await openai.responses.create({
       model: 'gpt-4.1-mini',
-      input: `
+      input: [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'input_text',
+              text: `
 あなたは SNS運用のプロ編集者です。
 以下のURLの内容を確認して、
 ・200〜300文字の要約
 ・30文字以内のタイトルを3つ
 ・おすすめハッシュタグ10個
-を出力してください。
+を日本語で出力してください。
 
 URL: ${url}
-      `,
+              `.trim(),
+            },
+          ],
+        },
+      ],
     });
 
-    const raw =
-      response.output[0]?.type === 'output_text'
-        ? response.output[0].content[0].text
-        : '';
+    // ★ 型安全に output からテキストを取り出す
+    let raw = '';
+
+    const firstItem = response.output[0];
+    if (firstItem && firstItem.type === 'message') {
+      const firstContent = firstItem.content[0];
+      if (firstContent && firstContent.type === 'output_text') {
+        raw = firstContent.text;
+      }
+    }
 
     //
-    // ⑥ 使用ログ記録（今まで通り）
+    // ⑥ usage_logs に記録
     //
     await supabase.from('usage_logs').insert({
       user_id: user.id,
       type: 'url',
+      model: 'gpt-4.1-mini',
+      // token/cost を付けたい場合はここに追加
     });
 
-    return NextResponse.json({ result: raw }, { status: 200 });
+    return NextResponse.json(
+      {
+        result: raw,
+      },
+      { status: 200 }
+    );
   } catch (e) {
     console.error('API /api/url error:', e);
     return NextResponse.json(
       {
-        error: 'server_error',
+        error: 'INTERNAL_SERVER_ERROR',
+        message: 'サーバーエラーが発生しました。',
       },
       { status: 500 }
     );
