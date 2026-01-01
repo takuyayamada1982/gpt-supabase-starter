@@ -1,21 +1,33 @@
 // app/api/_shared/auth.ts
-import { cookies } from 'next/headers';
-import { createRouteHandlerClient } from '@supabase/auth-helpers-nextjs';
+import { NextRequest } from 'next/server';
+import { supabase } from './profile';
 
-export async function getUserFromCookies() {
-  const supabase = createRouteHandlerClient({ cookies });
+// Authorization: Bearer xxx からユーザーを取得
+export async function getUserFromRequest(req: NextRequest) {
+  const authHeader = req.headers.get('authorization') ?? '';
 
-  const { data, error } = await supabase.auth.getUser();
+  const token = authHeader.startsWith('Bearer ')
+    ? authHeader.slice('Bearer '.length)
+    : '';
+
+  if (!token) {
+    return {
+      user: null,
+      error: 'missing_token' as const,
+    };
+  }
+
+  const { data, error } = await supabase.auth.getUser(token);
 
   if (error || !data?.user) {
     return {
       user: null,
-      error,
-    } as const;
+      error: error ?? 'invalid_token',
+    };
   }
 
   return {
     user: data.user,
-    error: null,
-  } as const;
+    error: null as any,
+  };
 }
