@@ -380,17 +380,39 @@ export default function UPage() {
 
     setUrlLoading(true);
     try {
+      // ★ ここで access_token を取得
+      const {
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
+
+      if (sessionError || !session) {
+        alert('ログイン情報が取得できませんでした。再ログインしてください。');
+        setUrlLoading(false);
+        return;
+      }
+
+      const tone =
+        stance === 'self' ? 'self' : stance === 'others' ? 'other' : 'third';
+
       const res = await fetch('/api/url', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`, // ★ 追加
+        },
         body: JSON.stringify({
-          userId,
+          userId, // 既存構成は残す（API側では使わなくてもOK）
           url: urlInput,
           promptContext: stancePrompts[stance],
+          tone, // 新APIの tone 用
         }),
       });
+
       const j = await res.json();
-      if (j?.error) throw new Error(j.error);
+      if (!res.ok) {
+        throw new Error(j?.message || j?.error || 'APIエラー');
+      }
 
       setUrlSummary(j.summary || '');
       setUrlTitles(Array.isArray(j.titles) ? j.titles : []);
@@ -402,6 +424,7 @@ export default function UPage() {
 
       alert('URLからSNS向け文章を生成しました');
     } catch (e: any) {
+      console.error(e);
       alert(`エラー: ${e.message}`);
     } finally {
       setUrlLoading(false);
@@ -535,6 +558,8 @@ export default function UPage() {
         body: JSON.stringify({
           userId,
           prompt: prompt + (imageNote ? `\n【補足説明】${imageNote}` : ''),
+
+
           filePath: path,
         }),
       });
@@ -801,7 +826,7 @@ export default function UPage() {
         </div>
 
         {/* 要約・タイトル案・ハッシュタグ候補 */}
-        {(urlSummary || urlTitles.length || urlHashtags.length) ? (
+        {urlSummary || urlTitles.length || urlHashtags.length ? (
           <div
             style={{
               borderTop: '1px dashed #e5e7eb',
@@ -894,7 +919,7 @@ export default function UPage() {
                     <span
                       key={i}
                       style={{
-                        border: '1px solid #eee',
+                        border: '1px solid '#eee'",
                         borderRadius: 999,
                         padding: '6px 10px',
                         background: '#fff',
@@ -986,7 +1011,9 @@ export default function UPage() {
           >
             {videoCountLoading ? (
               <>動画サムネイル機能の残り回数を取得しています…</>
-            ) : canUseVideoThumb && videoMaxLimit !== null && videoRemaining !== null ? (
+            ) : canUseVideoThumb &&
+              videoMaxLimit !== null &&
+              videoRemaining !== null ? (
               <>
                 動画サムネイル機能（Trial: 期間中10回 / Pro: 月30回）
                 <br />
