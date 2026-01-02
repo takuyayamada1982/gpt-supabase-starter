@@ -167,6 +167,8 @@ export default function MyPage() {
     };
   }, [profile]);
 
+  const isTrial = profile?.plan_status === 'trial';
+
   const referralUrl = useMemo(() => {
     if (!profile?.referral_code) return '';
     return `${REF_BASE_URL}?ref=${profile.referral_code}`;
@@ -380,7 +382,7 @@ export default function MyPage() {
 
           <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
             解約手続きを行った場合も、{dateLabel}まではサービスをご利用いただけます。
-            期限を過ぎるとログインができなくなります。
+            期限を過ぎるとログインしてもサービスが利用ができません。
           </p>
 
           <button
@@ -432,20 +434,46 @@ export default function MyPage() {
 
             <button
               onClick={() => goToCheckout('starter_to_pro')}
-              disabled={!!planLoading}
-              style={planButtonStyle(planLoading === 'starter_to_pro')}
+              disabled={!!planLoading || isTrial}
+              style={{
+                ...planButtonStyle(planLoading === 'starter_to_pro'),
+                ...(isTrial
+                  ? {
+                      backgroundColor: '#e5e7eb',
+                      color: '#9ca3af',
+                      border: '1px dashed #d1d5db',
+                      cursor: 'not-allowed',
+                    }
+                  : {}),
+              }}
             >
               Starter → Pro に変更
             </button>
 
             <button
               onClick={() => goToCheckout('pro_to_starter')}
-              disabled={!!planLoading}
-              style={planButtonStyle(planLoading === 'pro_to_starter')}
+              disabled={!!planLoading || isTrial}
+              style={{
+                ...planButtonStyle(planLoading === 'pro_to_starter'),
+                ...(isTrial
+                  ? {
+                      backgroundColor: '#e5e7eb',
+                      color: '#9ca3af',
+                      border: '1px dashed #d1d5db',
+                      cursor: 'not-allowed',
+                    }
+                  : {}),
+              }}
             >
               Pro → Starter に変更
             </button>
           </div>
+
+          {isTrial && (
+            <p style={{ fontSize: 11, color: '#9ca3af', marginTop: 6 }}>
+              ※ トライアル中は「Starter ⇔ Pro」のプラン変更はご利用いただけません。
+            </p>
+          )}
 
           <p style={{ fontSize: 12, color: '#6b7280', marginTop: 10 }}>
             ※ ボタンを押すと Stripe の購入画面へ移動します（支払い完了後、自動的にアプリへ戻ります）
