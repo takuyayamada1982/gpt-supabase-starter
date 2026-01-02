@@ -18,8 +18,18 @@ type Profile = {
 };
 
 // ✅ あなたの Payment Link（そのまま使う）
-const STRIPE_BUY_PRO_URL = 'https://buy.stripe.com/test_00w14p60a5cbdakaEw5J601';
-const STRIPE_BUY_STARTER_URL = 'https://buy.stripe.com/test_3cI9AVbku7kj9Y82805J600';
+// ✅ トライアル → Starter
+const STRIPE_TRIAL_TO_STARTER_URL = 'https://buy.stripe.com/3cI9AVbku7kj9Y82805J600';
+
+// ✅ トライアル → Pro
+const STRIPE_TRIAL_TO_PRO_URL = 'https://buy.stripe.com/00w14p60a5cbdakaEw5J601';
+
+// ✅ Starter → Pro
+const STRIPE_STARTER_TO_PRO_URL = 'https://buy.stripe.com/8x214pfAK1ZZfisbIA5J606';
+
+// ✅ Pro → Starter
+const STRIPE_PRO_TO_STARTER_URL = 'https://buy.stripe.com/3cI8wRcoy6gf2vG6og5J603';
+
 
 // ✅ 紹介URLのベース（本番URLに合わせる）
 const REF_BASE_URL = 'https://auto-post-studio.vercel.app/auth';
