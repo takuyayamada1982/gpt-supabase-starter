@@ -218,6 +218,15 @@ export default function MyPage() {
         return;
       }
 
+      // ✅ トライアル中は「Starter ⇔ Pro」のプラン変更を禁止
+      if (
+        profile.plan_status === 'trial' &&
+        (action === 'starter_to_pro' || action === 'pro_to_starter')
+      ) {
+        setError('トライアル中はプラン変更はできません。まず有料プランをご契約ください。');
+        return;
+      }
+
       // ✅ 現在プランによって“同じ遷移”を押しても意味がない場合は止める
       if (action === 'trial_to_starter' && profile.plan_status === 'paid') {
         setError('すでに有料プランです。');
@@ -371,7 +380,7 @@ export default function MyPage() {
 
           <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
             解約手続きを行った場合も、{dateLabel}まではサービスをご利用いただけます。
-            期限を過ぎるとログインしてもサービス利用ができなくなります。
+            期限を過ぎるとログインができなくなります。
           </p>
 
           <button
@@ -469,6 +478,8 @@ export default function MyPage() {
           ) : (
             <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
               紹介コードはまだ発行されていません。下のボタンから生成できます。
+              紹介コードから新規登録されると１４日間の無料期間を付与いたします。
+              （通常より７日間長く利用できます）
             </p>
           )}
 
