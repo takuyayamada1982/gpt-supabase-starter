@@ -30,7 +30,6 @@ const STRIPE_STARTER_TO_PRO_URL = 'https://buy.stripe.com/8x214pfAK1ZZfisbIA5J60
 // ✅ Pro → Starter
 const STRIPE_PRO_TO_STARTER_URL = 'https://buy.stripe.com/3cI8wRcoy6gf2vG6og5J603';
 
-
 // ✅ 紹介URLのベース（本番URLに合わせる）
 const REF_BASE_URL = 'https://auto-post-studio.vercel.app/auth';
 
@@ -121,7 +120,7 @@ export default function MyPage() {
     return '未契約';
   }, [profile]);
 
-  // 🔸 日付のラベルと表示文言（ここを追加）
+  // 🔸 日付のラベルと表示文言
   const { dateLabel, dateText, showRemaining } = useMemo(() => {
     if (!profile?.plan_valid_until) {
       return {
@@ -237,12 +236,12 @@ export default function MyPage() {
         return;
       }
 
-      // ✅ 遷移先URLを決める
+      // ✅ 遷移先URLを決める（4パターン別々）
       let url = '';
-      if (action === 'trial_to_starter') url = STRIPE_BUY_STARTER_URL;
-      if (action === 'trial_to_pro') url = STRIPE_BUY_PRO_URL;
-      if (action === 'starter_to_pro') url = STRIPE_BUY_PRO_URL;
-      if (action === 'pro_to_starter') url = STRIPE_BUY_STARTER_URL;
+      if (action === 'trial_to_starter') url = STRIPE_TRIAL_TO_STARTER_URL;
+      if (action === 'trial_to_pro') url = STRIPE_TRIAL_TO_PRO_URL;
+      if (action === 'starter_to_pro') url = STRIPE_STARTER_TO_PRO_URL;
+      if (action === 'pro_to_starter') url = STRIPE_PRO_TO_STARTER_URL;
 
       if (!url) throw new Error('購入URLが設定されていません。');
 
@@ -503,7 +502,7 @@ function planButtonStyle(active: boolean): CSSProperties {
     width: '100%',
     padding: '10px 14px',
     borderRadius: 999,
-    border: '1px solid #e5e7eb',
+    border: '1px solid '#e5e7eb',
     backgroundColor: active ? '#111827' : '#ffffff',
     color: active ? '#ffffff' : '#111827',
     fontSize: 14,
