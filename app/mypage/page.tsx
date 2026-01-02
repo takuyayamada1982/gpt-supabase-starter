@@ -371,7 +371,7 @@ export default function MyPage() {
 
           <p style={{ fontSize: 12, color: '#6b7280', marginBottom: 12 }}>
             解約手続きを行った場合も、{dateLabel}まではサービスをご利用いただけます。
-            期限を過ぎるとログインができなくなります。
+            期限を過ぎるとログインしてもサービス利用ができなくなります。
           </p>
 
           <button
@@ -502,7 +502,7 @@ function planButtonStyle(active: boolean): CSSProperties {
     width: '100%',
     padding: '10px 14px',
     borderRadius: 999,
-    border: '1px solid '#e5e7eb',
+    border: '1px solid #e5e7eb',
     backgroundColor: active ? '#111827' : '#ffffff',
     color: active ? '#ffffff' : '#111827',
     fontSize: 14,
