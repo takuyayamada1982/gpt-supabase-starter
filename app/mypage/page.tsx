@@ -496,8 +496,11 @@ export default function MyPage() {
             <>
               <p style={{ fontSize: 13, marginBottom: 4 }}>
                 あなたの紹介コード： <strong>{profile.referral_code}</strong>
-                 紹介コードから新規登録されると１４日間の無料期間を付与いたします。
-              （通常より７日間長く利用できます）
+              </p>
+              <p style={{ fontSize: 12, marginBottom: 6 }}>
+                紹介コードから新規登録されると<strong>14日間の無料期間</strong>を付与いたします。
+                <br />
+                （通常より<strong>7日間長く</strong>ご利用いただけます）
               </p>
               <p style={{ fontSize: 13, marginBottom: 8 }}>
                 紹介用URL：
